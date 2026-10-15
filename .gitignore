@@ -1,0 +1,11 @@
+node_modules/
+dist/
+docs/
+
+# 本地凭证与运行状态 —— 绝不可提交
+.wechatbot/
+.codexmonitor/
+*.credentials.json
+*.local.json
+.env
+.env.*
