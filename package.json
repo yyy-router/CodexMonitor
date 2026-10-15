@@ -1,13 +1,27 @@
 {
   "name": "codexmonitor",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "version": "0.1.0",
+  "description": "监控本地 Codex 运行状态，通过微信推送通知",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
   },
-  "keywords": [],
-  "author": "",
+  "scripts": {
+    "probe:login": "node demo/ilink-probe.mjs login",
+    "probe:listen": "node demo/ilink-probe.mjs listen",
+    "probe:send": "node demo/ilink-probe.mjs send",
+    "probe:flood": "node demo/ilink-probe.mjs flood"
+  },
+  "keywords": [
+    "codex",
+    "wechat",
+    "ilink",
+    "notification"
+  ],
   "license": "ISC",
-  "type": "commonjs"
+  "dependencies": {
+    "@wechatbot/wechatbot": "^2.2.0",
+    "qrcode-terminal": "^0.12.0"
+  }
 }
