@@ -57,6 +57,14 @@ export type Config = {
       autoReply: boolean
     }
   }
+  /** 飞书通道专属配置（仅 channel === 'feishu' 时生效） */
+  feishu: {
+    appId: string
+    appSecret: string
+    /** 解析 open_id 用；email 与 mobile 至少填一个 */
+    email: string
+    mobile: string
+  }
   state: {
     dir: string
   }
@@ -100,6 +108,12 @@ export const DEFAULT_CONFIG: Config = {
     userId: '',
     storageDir: '~/.wechatbot',
     quota: { perActivation: 10, reserveForAlerts: 6, autoReply: false },
+  },
+  feishu: {
+    appId: '',
+    appSecret: '',
+    email: '',
+    mobile: '',
   },
   state: { dir: '~/.codexmonitor' },
 }
