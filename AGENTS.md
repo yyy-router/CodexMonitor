@@ -1,6 +1,6 @@
 # CodexMonitor —— 项目约定
 
-监控本地 Codex 运行状态，通过微信 iLink 协议推送通知。
+监控本地 Codex 运行状态，通过微信 iLink / 飞书企业自建应用推送通知。
 技术栈：TypeScript + Node.js（≥ 22）。
 
 ---
@@ -76,6 +76,7 @@ docs: 补充部署说明
 ```
 .wechatbot/        iLink 登录凭证与 context_token
 .codexmonitor/     运行时状态
+.feishu/           飞书相关本地数据（防御性忽略；配置走单一配置文件，不用该目录）
 *.credentials.json
 *.local.json
 .env*
@@ -131,6 +132,7 @@ docs: 补充部署说明
 已确认：
 
 - 微信 iLink 推送可用，配额机制已量化（见上）
+- 飞书自建应用推送可用（2026-10-19 探针实测）：私聊无需先互动、token 时间门控、手机号 / 邮箱直接解析 open_id、单聊限流约 5 QPS
 - 登录 / 收信 / 推送全链路跑通，凭证与 `context_token` 可跨进程复用
 - Codex 会话日志（`~/.codex/sessions/**/*.jsonl`）可观测完成 / 中断 / 额度事件
 - 多窗口并发是常态（最大并发 2、约 23% 时间在下并发），额度是账号级的
