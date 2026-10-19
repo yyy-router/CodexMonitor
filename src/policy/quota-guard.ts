@@ -1,5 +1,7 @@
 /**
- * 配额守卫（纯函数，§4.3）。
+ * 配额守卫（纯函数，§4.3）—— 仅 iLink 通道的会话额度守卫。
+ *
+ * 飞书 webhook / 自建应用没有「10 条会话额度 + 入站重置」模型，无需此守卫。
  *
  * 模型：每次用户激活得 perActivation 条（§2.6），不是 24h 窗口。
  *   - 发送成功 → remaining 递减
@@ -12,7 +14,7 @@ import type { Severity } from '../events.js'
 import type { DeliveryResult } from '../notify/notifier.js'
 import type { Config } from '../config.js'
 
-export type QuotaGuardConfig = Config['notify']['quota']
+export type QuotaGuardConfig = Config['ilink']['quota']
 
 export type QuotaGuard = {
   /** 按级别判断预算是否够发（alert/critical 永不被砍） */

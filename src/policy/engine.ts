@@ -16,7 +16,8 @@ export type PolicyDeps = {
   classify: typeof classify
   aggregator: Aggregator
   quotaTracker: QuotaTracker
-  quotaGuard: QuotaGuard
+  /** 投递守卫。iLink 有会话额度守卫；飞书 webhook 无，缺省即不设防（恒可发） */
+  quotaGuard?: QuotaGuard
 }
 
 export type PolicyEngine = {
@@ -24,9 +25,9 @@ export type PolicyEngine = {
   onEvent(ev: CodexEvent | NetEvent, now: number): Notification[]
   /** tick 循环调用（聚合 flush + 倒计时） */
   tick(now: number): Notification[]
-  /** 入站消息 = 配额充值信号 */
+  /** 入站消息（iLink 下用于配额充值；无守卫时 no-op） */
   onInbound(msg: InboundMessage): void
-  /** 投递结果回传，供配额守卫记账 */
+  /** 投递结果回传，供守卫记账（无守卫时 no-op） */
   onDelivery(result: DeliveryResult): void
 }
 

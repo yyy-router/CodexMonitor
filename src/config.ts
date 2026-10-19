@@ -5,6 +5,9 @@
  * 完整字段说明见设计文档 §6。
  */
 
+/** 推送通道判别：ilink（微信 iLink）或 feishu */
+export type Channel = 'ilink' | 'feishu'
+
 export type Config = {
   codex: {
     /** Codex 会话日志根目录 */
@@ -15,16 +18,12 @@ export type Config = {
     stallLogOnly: boolean
   }
   notify: {
+    /** 推送通道：默认 ilink；接入飞书时切 feishu */
+    channel: Channel
     aggregate: {
       minIntervalMs: number
       maxItems: number
       maxPerDay: number
-    }
-    /** 配额模型：每次用户激活得 perActivation 条（§2.6），不是 24h 窗口 */
-    quota: {
-      perActivation: number
-      reserveForAlerts: number
-      autoReply: boolean
     }
     thresholds: {
       quotaWarn: number
@@ -46,10 +45,17 @@ export type Config = {
     targets: { l2: string; l3: string }
     proxy: { mode: 'auto' | 'manual'; ports: number[] }
   }
+  /** iLink 通道专属配置（仅 channel === 'ilink' 时生效） */
   ilink: {
     /** 首次运行由扫码 / 入站消息确定 */
     userId: string
     storageDir: string
+    /** 会话额度模型：每次用户激活得 perActivation 条（§2.6），不是 24h 窗口 */
+    quota: {
+      perActivation: number
+      reserveForAlerts: number
+      autoReply: boolean
+    }
   }
   state: {
     dir: string
@@ -64,8 +70,8 @@ export const DEFAULT_CONFIG: Config = {
     stallLogOnly: true,
   },
   notify: {
+    channel: 'ilink',
     aggregate: { minIntervalMs: 7200000, maxItems: 5, maxPerDay: 4 },
-    quota: { perActivation: 10, reserveForAlerts: 6, autoReply: false },
     thresholds: {
       quotaWarn: 80,
       quotaCritical: 95,
@@ -90,7 +96,11 @@ export const DEFAULT_CONFIG: Config = {
     },
     proxy: { mode: 'auto', ports: [7890, 7891, 7892, 7897, 10808, 1080] },
   },
-  ilink: { userId: '', storageDir: '~/.wechatbot' },
+  ilink: {
+    userId: '',
+    storageDir: '~/.wechatbot',
+    quota: { perActivation: 10, reserveForAlerts: 6, autoReply: false },
+  },
   state: { dir: '~/.codexmonitor' },
 }
 
