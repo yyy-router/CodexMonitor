@@ -7,6 +7,10 @@
  *   - `session_meta`  —— 会话元信息（cwd、session_id、source），用于给事件补充来源标识
  *   - `event_msg`     —— 带业务语义的事件，见 payload.type（task_started / task_complete / token_count / turn_aborted …）
  *   - 其余（response_item / token_usage_record / world_state / compacted …）忽略
+ *
+ * 除 Codex 事件外，本文件还承载跨模块的三种核心类型：
+ *   - NetEvent / ProbeVerdict —— 网络探针产出
+ *   - Notification / Severity —— PolicyEngine 产出、Notifier 投递
  */
 
 /** 会话上下文，来自每个文件首行的 session_meta，由 tailer 维护并注入到每个事件 */
@@ -59,3 +63,40 @@ export type CodexEvent =
       kind: 'quota'
       window: QuotaWindow
     })
+
+/**
+ * 通知级别，按严重程度递增：info < warn < critical < alert。
+ * 分级依据见设计文档 §4.3 / §5；`alert` 与 `critical` 永不被配额守卫砍掉。
+ */
+export type Severity = 'info' | 'warn' | 'critical' | 'alert'
+
+/**
+ * PolicyEngine 产出、交给 Notifier 投递的通知。
+ * 这是「该不该推 / 推什么」决策的最终产物，尚未经过任何网络 IO。
+ */
+export type Notification = {
+  /** 幂等去重键，同一逻辑事件重复触发时值相同 */
+  id: string
+  /** 产生时间，unix 毫秒 */
+  ts: number
+  severity: Severity
+  /** 最终发送给用户的完整文案 */
+  text: string
+  /** 触发来源标识（turnComplete / quotaExhausted / probeDown …），供投递日志与去重 */
+  source: string
+}
+
+/**
+ * 网络探针判定（§4.2）：
+ *   ok=链路通，slow=通但延迟高，proxyDown=代理节点挂了，
+ *   netDown=整体断网，proxyNotRunning=代理程序未运行。
+ */
+export type ProbeVerdict = 'ok' | 'slow' | 'proxyDown' | 'netDown' | 'proxyNotRunning'
+
+/** NetProbe 产出、进入 PolicyEngine 的事件。网络是全局的，与 Codex 会话解耦。 */
+export type NetEvent = {
+  ts: number
+  verdict: ProbeVerdict
+  /** 出口链路耗时（L2），毫秒；探测失败时为 null */
+  latencyMs: number | null
+}
