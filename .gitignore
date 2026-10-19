@@ -5,6 +5,7 @@ docs/
 # 本地凭证与运行状态 —— 绝不可提交
 .wechatbot/
 .codexmonitor/
+.feishu/
 *.credentials.json
 *.local.json
 .env
