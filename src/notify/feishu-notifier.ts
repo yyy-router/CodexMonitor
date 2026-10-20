@@ -20,6 +20,8 @@ const TOKEN_REUSE_MS = 30 * 60 * 1000
 const MAX_ATTEMPTS = 3
 /** 单聊限频错误码 */
 const RATE_LIMIT_CODE = 230020
+/** 单次请求超时（覆盖连接 + 读 body），防卡死请求拖垮共享 promise */
+const DEFAULT_TIMEOUT_MS = 10_000
 
 export type FeishuNotifierOptions = {
   appId: string
@@ -35,6 +37,8 @@ export type FeishuNotifierOptions = {
   now?: () => number
   /** 注入退避睡眠，测试用；默认 setTimeout */
   sleepImpl?: (ms: number) => Promise<void>
+  /** 单次请求超时毫秒（覆盖连接 + 读 body）；默认 10000，<=0 表示不设超时 */
+  timeoutMs?: number
 }
 
 type FeishuResp = {
@@ -57,6 +61,7 @@ export class FeishuNotifier implements Notifier {
   private readonly fetch: typeof fetch
   private readonly now: () => number
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly timeoutMs: number
 
   private token: { value: string; expiresAt: number } | null = null
   private tokenPromise: Promise<string> | null = null
@@ -72,6 +77,7 @@ export class FeishuNotifier implements Notifier {
     this.fetch = opts.fetchImpl ?? ((input, init) => globalThis.fetch(input, init))
     this.now = opts.now ?? (() => Date.now())
     this.sleep = opts.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
   /** 解析并缓存 open_id（凭证错在此 fail-fast） */
@@ -92,30 +98,28 @@ export class FeishuNotifier implements Notifier {
   }
 
   private async sendWithRetry(openId: string, n: Notification): Promise<DeliveryResult> {
+    const token = await this.getToken()
     let last: { errcode?: number; reason?: string } = {}
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        const token = await this.getToken()
-        const r = await this.request(
-          '/open-apis/im/v1/messages',
-          {
-            receive_id: openId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: n.text }),
-          },
-          token,
-          'receive_id_type=open_id',
-        )
-        if (r.code === 0) {
-          return { ok: true, messageId: r.data?.message_id }
-        }
-        if (r.code !== RATE_LIMIT_CODE) {
-          return { ok: false, errcode: r.code, reason: r.msg }
-        }
-        last = { errcode: r.code, reason: r.msg }
-      } catch (e) {
-        last = { reason: e instanceof Error ? e.message : String(e) }
+      const r = await this.request(
+        '/open-apis/im/v1/messages',
+        {
+          receive_id: openId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: n.text }),
+          // 幂等去重键（≤50 字符）：同一逻辑事件重发、或响应丢失后的重试，1h 内至多发一条
+          uuid: n.id,
+        },
+        token,
+        'receive_id_type=open_id',
+      )
+      if (r.code === 0) {
+        return { ok: true, messageId: r.data?.message_id }
       }
+      if (r.code !== RATE_LIMIT_CODE) {
+        return { ok: false, errcode: r.code, reason: r.msg }
+      }
+      last = { errcode: r.code, reason: r.msg }
       if (attempt < MAX_ATTEMPTS) {
         await this.sleep(500 * attempt)
       }
@@ -178,7 +182,10 @@ export class FeishuNotifier implements Notifier {
     return openId
   }
 
-  /** 单次 POST（不重试）。网络错误向上抛，由 sendWithRetry 决定重试。 */
+  /**
+   * 单次 POST，网络错误自动退避重试（token / open_id / 消息投递共用），
+   * 并带超时（覆盖连接 + 读 body）。业务错误码原样返回，由调用方决定处理。
+   */
   private async request(
     path: string,
     body: unknown,
@@ -188,7 +195,23 @@ export class FeishuNotifier implements Notifier {
     const url = `${this.baseUrl}${path}${query ? `?${query}` : ''}`
     const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8' }
     if (token) headers.Authorization = `Bearer ${token}`
-    const res = await this.fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
-    return (await res.json()) as FeishuResp
+    let lastErr: Error | null = null
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await this.fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: this.timeoutMs > 0 ? AbortSignal.timeout(this.timeoutMs) : undefined,
+        })
+        return (await res.json()) as FeishuResp
+      } catch (e) {
+        lastErr = e instanceof Error ? e : new Error(String(e))
+        if (attempt < MAX_ATTEMPTS) {
+          await this.sleep(500 * attempt)
+        }
+      }
+    }
+    throw lastErr
   }
 }

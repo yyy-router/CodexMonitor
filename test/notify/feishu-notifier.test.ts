@@ -142,6 +142,7 @@ describe('FeishuNotifier', () => {
       receive_id: 'ou_1',
       msg_type: 'text',
       content: JSON.stringify({ text: '完成' }),
+      uuid: 'n1',
     })
   })
 
@@ -224,5 +225,73 @@ describe('FeishuNotifier', () => {
     expect(tokenCalls(fake.calls)).toHaveLength(1)
     expect(openIdCalls(fake.calls)).toHaveLength(1)
     expect(msgCalls(fake.calls)).toHaveLength(2)
+  })
+
+  it('首次 send 时 open_id 解析遇网络错误会重试后成功', async () => {
+    const fake = makeFake()
+    let remainingFails = 1
+    fake.handlers.batchGetId = () => {
+      if (remainingFails > 0) {
+        remainingFails--
+        throw new Error('ECONNRESET')
+      }
+      return { code: 0, msg: 'ok', data: { user_list: [{ user_id: 'ou_1' }] } }
+    }
+    const n = new FeishuNotifier({
+      appId: 'a',
+      appSecret: 's',
+      mobile: '+8613800138000',
+      fetchImpl: fake.fn,
+      now: () => 0,
+      sleepImpl: async () => {},
+    })
+
+    const r = await n.send(makeNotification())
+
+    expect(r).toEqual({ ok: true, messageId: 'om_1' })
+    expect(openIdCalls(fake.calls)).toHaveLength(2)
+  })
+
+  it('请求卡住时按 timeoutMs 超时中止，并释放共享 promise 供后续重试', async () => {
+    let hang = true
+    let tokenAttempts = 0
+    const fn = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/tenant_access_token')) {
+        tokenAttempts++
+        if (hang) {
+          // 挂起：只在 abort 时 reject，模拟连接卡死
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')))
+          })
+        }
+        return { json: async () => ({ code: 0, tenant_access_token: 't-ok', expire: 7200 }) }
+      }
+      if (url.includes('/batch_get_id')) {
+        return { json: async () => ({ code: 0, data: { user_list: [{ user_id: 'ou_1' }] } }) }
+      }
+      return { json: async () => ({ code: 0, data: { message_id: 'om_1' } }) }
+    }) as unknown as typeof fetch
+
+    const n = new FeishuNotifier({
+      appId: 'a',
+      appSecret: 's',
+      mobile: '+8613800138000',
+      timeoutMs: 20,
+      fetchImpl: fn,
+      now: () => 0,
+      sleepImpl: async () => {},
+    })
+
+    // 第一次 send：token 卡死 → 3 次超时后失败
+    const r1 = await n.send(makeNotification({ id: 'n1' }))
+    expect(r1.ok).toBe(false)
+    expect(tokenAttempts).toBe(3)
+
+    // 解除挂起后，第二次 send 应能重新取 token（共享 promise 已释放）并成功
+    hang = false
+    const r2 = await n.send(makeNotification({ id: 'n2' }))
+    expect(r2).toEqual({ ok: true, messageId: 'om_1' })
+    expect(tokenAttempts).toBe(4)
   })
 })
