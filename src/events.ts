@@ -17,6 +17,8 @@
 export type SessionContext = {
   sessionId: string
   cwd: string
+  /** 是否为根会话（id === session_id）；子线程为 false，tailer 据此过滤避免重复通知 */
+  isRoot: boolean
 }
 
 export type EventBase = {

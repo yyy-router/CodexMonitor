@@ -1,15 +1,31 @@
 import { describe, it, expect } from 'vitest'
 import { parseLine, parseSessionMeta } from '../../src/watcher/parse.js'
 
-const ctx = { sessionId: 'sess-1', cwd: 'd:\\code_store\\大论文' }
+const ctx = { sessionId: 'sess-1', cwd: 'd:\\code_store\\大论文', isRoot: true }
 
 describe('parseSessionMeta', () => {
-  it('提取 session_id 与 cwd', () => {
+  it('提取 session_id、cwd 与 isRoot（根会话 id === session_id）', () => {
     const line = JSON.stringify({
       type: 'session_meta',
-      payload: { session_id: 'abc-123', cwd: 'd:\\code_store\\大论文' },
+      payload: { id: 'abc-123', session_id: 'abc-123', cwd: 'd:\\code_store\\大论文' },
     })
-    expect(parseSessionMeta(line)).toEqual({ sessionId: 'abc-123', cwd: 'd:\\code_store\\大论文' })
+    expect(parseSessionMeta(line)).toEqual({
+      sessionId: 'abc-123',
+      cwd: 'd:\\code_store\\大论文',
+      isRoot: true,
+    })
+  })
+
+  it('子线程（id !== session_id）isRoot 为 false', () => {
+    const line = JSON.stringify({
+      type: 'session_meta',
+      payload: { id: 'child-1', session_id: 'abc-123', cwd: 'd:\\code_store\\大论文' },
+    })
+    expect(parseSessionMeta(line)).toEqual({
+      sessionId: 'abc-123',
+      cwd: 'd:\\code_store\\大论文',
+      isRoot: false,
+    })
   })
 
   it('非 session_meta 返回 null', () => {

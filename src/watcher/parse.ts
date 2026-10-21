@@ -26,6 +26,7 @@ function num(v: unknown): number | null {
 /**
  * 解析 session_meta 行，提取会话上下文。
  * 每个 rollout 文件的首行通常是 session_meta，包含 session_id 与 cwd。
+ * isRoot 判别根会话（id === session_id）与子线程（guardian_review 等，id 不同）。
  */
 export function parseSessionMeta(line: string): SessionContext | null {
   const obj = safeParse(line)
@@ -35,7 +36,9 @@ export function parseSessionMeta(line: string): SessionContext | null {
   const sessionId = str(p.session_id)
   const cwd = str(p.cwd)
   if (!sessionId) return null
-  return { sessionId, cwd }
+  const id = str(p.id)
+  const isRoot = id === sessionId
+  return { sessionId, cwd, isRoot }
 }
 
 /**
