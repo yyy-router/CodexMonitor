@@ -158,10 +158,12 @@ function validate(cfg: Config): void {
   }
   if (ch === 'feishu') {
     const f = cfg.feishu
+    // 必填项须为非空字符串：真值判断挡不住 []、{}、空白串等非法类型，会漏进 notifier
+    const nonblank = (v: unknown): v is string => typeof v === 'string' && v.trim() !== ''
     const missing: string[] = []
-    if (!f.appId) missing.push('feishu.appId')
-    if (!f.appSecret) missing.push('feishu.appSecret')
-    if (!f.email && !f.mobile) missing.push('feishu.email 或 feishu.mobile')
+    if (!nonblank(f.appId)) missing.push('feishu.appId')
+    if (!nonblank(f.appSecret)) missing.push('feishu.appSecret')
+    if (!nonblank(f.email) && !nonblank(f.mobile)) missing.push('feishu.email 或 feishu.mobile')
     if (missing.length > 0) {
       throw new Error(`channel='feishu' 缺少必填项：${missing.join('、')}`)
     }

@@ -65,6 +65,42 @@ describe('mergeConfig', () => {
     expect(r.feishu.mobile).toBe('+8613800138000')
   })
 
+  it("channel='feishu' appId 给空数组抛错", () => {
+    expect(() =>
+      mergeConfig({
+        notify: { channel: 'feishu' },
+        feishu: { appId: [] as unknown as string, appSecret: 's', email: 'e@x.com' },
+      }),
+    ).toThrow(/appId/)
+  })
+
+  it("channel='feishu' appId 给空对象抛错", () => {
+    expect(() =>
+      mergeConfig({
+        notify: { channel: 'feishu' },
+        feishu: { appId: {} as unknown as string, appSecret: 's', email: 'e@x.com' },
+      }),
+    ).toThrow(/appId/)
+  })
+
+  it("channel='feishu' appId 给空白字符串抛错", () => {
+    expect(() =>
+      mergeConfig({
+        notify: { channel: 'feishu' },
+        feishu: { appId: '   ', appSecret: 's', email: 'e@x.com' },
+      }),
+    ).toThrow(/appId/)
+  })
+
+  it("channel='feishu' email 给空数组视为缺失抛错", () => {
+    expect(() =>
+      mergeConfig({
+        notify: { channel: 'feishu' },
+        feishu: { appId: 'a', appSecret: 's', email: [] as unknown as string },
+      }),
+    ).toThrow(/email/)
+  })
+
   it("channel='ilink'（默认）无需凭证即通过", () => {
     const r = mergeConfig({ ilink: { userId: 'u1' } })
     expect(r.ilink.userId).toBe('u1')
