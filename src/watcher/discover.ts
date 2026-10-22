@@ -13,7 +13,8 @@ export type SessionFile = {
   size: number
 }
 
-/** 按 mtimeMs 降序，取前 maxTracked 个 */
-export function selectFiles(_files: SessionFile[], _maxTracked: number): SessionFile[] {
-  throw new Error('Not implemented: selectFiles')
+/** 按 mtimeMs 降序，取前 maxTracked 个。纯函数：不改入参。 */
+export function selectFiles(files: SessionFile[], maxTracked: number): SessionFile[] {
+  const n = Math.max(0, maxTracked)
+  return [...files].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, n)
 }
