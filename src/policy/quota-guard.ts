@@ -27,6 +27,36 @@ export type QuotaGuard = {
   isSilenced(): boolean
 }
 
-export function createQuotaGuard(_cfg: QuotaGuardConfig): QuotaGuard {
-  throw new Error('Not implemented: createQuotaGuard')
+export function createQuotaGuard(cfg: QuotaGuardConfig): QuotaGuard {
+  let remaining = cfg.perActivation
+
+  return {
+    canSend(severity) {
+      if (remaining <= 0) return false // 硬墙：耗尽后一律静默
+      if (severity === 'alert' || severity === 'critical') return true
+      // info / warn：只用 reserveForAlerts 之外的那部分预算
+      return remaining > cfg.reserveForAlerts
+    },
+
+    onSent(result) {
+      if (result.ok) {
+        remaining = Math.max(0, remaining - 1)
+      } else if (result.errcode === -2) {
+        remaining = 0 // 配额耗尽，静默降级
+      }
+      // 其他失败（网络等）：消息未投出，不扣额度
+    },
+
+    onInbound() {
+      remaining = cfg.perActivation
+    },
+
+    remaining() {
+      return remaining
+    },
+
+    isSilenced() {
+      return remaining <= 0
+    },
+  }
 }
