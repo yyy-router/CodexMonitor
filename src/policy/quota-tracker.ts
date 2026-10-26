@@ -21,6 +21,8 @@ export type WindowState = {
   waiting: boolean
   notifiedExhausted: boolean
   notifiedReset: boolean
+  /** 最近一次通知重置时对应的 resetsAt；同一周期不再重复耗尽/重置 */
+  lastResetResetsAt: number | null
   /** 已处理事件的最大 ts，丢弃陈旧事件（多窗口必需） */
   lastProcessedTs: number
   lastUpdatedAt: number
@@ -103,6 +105,7 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
           waiting: false,
           notifiedExhausted: false,
           notifiedReset: false,
+          lastResetResetsAt: null,
           lastProcessedTs: ts,
           lastUpdatedAt: now,
         })
@@ -119,7 +122,10 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
       s.lastUpdatedAt = now
 
       // 耗尽：进入等待状态 + 推 alert（notifiedExhausted 去重）
-      if (p >= cfg.thresholds.quotaExhausted && !s.notifiedExhausted) {
+      // 同一重置周期（resetsAt 未超过已通知重置的值）不再重复耗尽
+      const sameResetPeriod =
+        resetsAt != null && s.lastResetResetsAt != null && resetsAt <= s.lastResetResetsAt
+      if (p >= cfg.thresholds.quotaExhausted && !s.notifiedExhausted && !sameResetPeriod) {
         s.waiting = true
         s.notifiedExhausted = true
         s.notifiedReset = false
@@ -138,6 +144,7 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
         s.waiting = false
         s.notifiedReset = true
         s.notifiedExhausted = false
+        s.lastResetResetsAt = resetsAt
         return [resetA(wm, p, now)]
       }
 
@@ -154,6 +161,7 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
           s.waiting = false
           s.notifiedReset = true
           s.notifiedExhausted = false
+          s.lastResetResetsAt = s.resetsAt
           notes.push(resetB(wm, now))
         }
       }

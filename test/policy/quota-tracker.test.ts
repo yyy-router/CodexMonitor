@@ -114,6 +114,14 @@ describe('createQuotaTracker', () => {
     expect(t.snapshot()).toEqual({})
   })
 
+  it('路径 B 重置后，同周期 100% 事件不再重复耗尽（防循环）', () => {
+    const t = createQuotaTracker(cfg)
+    t.process(quota(300, 100, 1000, 1), 1) // 耗尽，resetsAt = 1000
+    expect(t.tick(1000 * 1000)).toHaveLength(1) // 路径 B 重置
+    // 同周期（resetsAt 仍 1000）再来 100% 事件：不应再次耗尽
+    expect(t.process(quota(300, 100, 1000, 2), 1000 * 1000 + 1)).toHaveLength(0)
+  })
+
   it('snapshot / restore 往返：恢复后去重标志仍生效', () => {
     const a = createQuotaTracker(cfg)
     a.process(quota(300, 100, 1000, 1), 1) // 耗尽
