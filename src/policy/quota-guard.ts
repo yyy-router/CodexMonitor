@@ -17,8 +17,8 @@ import type { Config } from '../config.js'
 export type QuotaGuardConfig = Config['ilink']['quota']
 
 export type QuotaGuard = {
-  /** 按级别判断预算是否够发（alert/critical 永不被砍） */
-  canSend(severity: Severity): boolean
+  /** 按级别判断预算是否够发（alert/critical 永不被砍）。可传外部 budget 供批处理模拟递减 */
+  canSend(severity: Severity, budget?: number): boolean
   /** 投递结果回传：成功递减；errcode -2 → 归零静默 */
   onSent(result: DeliveryResult): void
   /** 入站消息 = 充值，remaining 回 perActivation */
@@ -27,6 +27,36 @@ export type QuotaGuard = {
   isSilenced(): boolean
 }
 
-export function createQuotaGuard(_cfg: QuotaGuardConfig): QuotaGuard {
-  throw new Error('Not implemented: createQuotaGuard')
+export function createQuotaGuard(cfg: QuotaGuardConfig): QuotaGuard {
+  let remaining = cfg.perActivation
+
+  return {
+    canSend(severity, budget = remaining) {
+      if (budget <= 0) return false // 硬墙：耗尽后一律静默
+      if (severity === 'alert' || severity === 'critical') return true
+      // info / warn：只用 reserveForAlerts 之外的那部分预算
+      return budget > cfg.reserveForAlerts
+    },
+
+    onSent(result) {
+      if (result.ok) {
+        remaining = Math.max(0, remaining - 1)
+      } else if (result.errcode === -2) {
+        remaining = 0 // 配额耗尽，静默降级
+      }
+      // 其他失败（网络等）：消息未投出，不扣额度
+    },
+
+    onInbound() {
+      remaining = cfg.perActivation
+    },
+
+    remaining() {
+      return remaining
+    },
+
+    isSilenced() {
+      return remaining <= 0
+    },
+  }
 }
