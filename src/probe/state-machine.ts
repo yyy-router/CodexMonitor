@@ -31,6 +31,48 @@ export type ProbeStateMachine = {
   state(): ProbeState
 }
 
-export function createProbeStateMachine(_cfg: StateMachineConfig): ProbeStateMachine {
-  throw new Error('Not implemented: createProbeStateMachine')
+/** slow 表示链路仍通（只是慢），不参与报警判定；报警文案里也从未出现它 */
+const isHealthy = (v: ProbeVerdict): boolean => v === 'ok' || v === 'slow'
+
+export function createProbeStateMachine(cfg: StateMachineConfig): ProbeStateMachine {
+  let state: ProbeState = 'normal'
+  let failStreak = 0
+  let okStreak = 0
+
+  return {
+    next({ verdict }) {
+      if (state === 'normal') {
+        if (isHealthy(verdict)) {
+          failStreak = 0
+          return { transition: 'none', state }
+        }
+        failStreak += 1
+        if (failStreak >= cfg.confirmAttempts) {
+          state = 'alert'
+          failStreak = 0
+          okStreak = 0
+          return { transition: 'enteredAlert', state }
+        }
+        return { transition: 'none', state }
+      }
+
+      // alert 态：只有连续 ok 才恢复；slow 同样视为链路已通
+      if (isHealthy(verdict)) {
+        okStreak += 1
+        if (okStreak >= cfg.recoverAttempts) {
+          state = 'normal'
+          failStreak = 0
+          okStreak = 0
+          return { transition: 'recovered', state }
+        }
+      } else {
+        okStreak = 0
+      }
+      return { transition: 'none', state }
+    },
+
+    state() {
+      return state
+    },
+  }
 }
