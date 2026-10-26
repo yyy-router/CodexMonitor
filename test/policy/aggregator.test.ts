@@ -83,4 +83,12 @@ describe('createAggregator', () => {
     expect(a.maybeFlush(0)).not.toBeNull()
     expect(a.maybeFlush(1000)).toBeNull() // 池已空
   })
+
+  it('超长 summary 被截断，聚合消息长度受控（≤ 2000 字符）', () => {
+    const a = createAggregator(cfg)
+    a.add(item('p', 'x'.repeat(3000), 1), 0)
+    const n = a.maybeFlush(0)
+    expect(n!.text.length).toBeLessThanOrEqual(2000)
+    expect(n!.text).toContain('…') // 有截断标记
+  })
 })

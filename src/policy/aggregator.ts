@@ -24,6 +24,13 @@ export type Aggregator = {
   maybeFlush(now: number): Notification | null
 }
 
+/** 聚合消息硬上限：超过即分片（每片占 1 条配额），必须主动控制长度 */
+const MAX_AGG_TEXT = 2000
+/** 单条 summary 截断上限，避免一条超长 lastAgentMessage 撑爆整条消息 */
+const MAX_SUMMARY = 200
+const truncate = (s: string, max: number): string =>
+  s.length > max ? s.slice(0, max - 1) + '…' : s
+
 export function createAggregator(cfg: AggregatorConfig): Aggregator {
   let items: CompletedItem[] = []
   let lastFlushAt: number | null = null
@@ -54,10 +61,13 @@ export function createAggregator(cfg: AggregatorConfig): Aggregator {
       }
       batch = [...batch].sort((a, b) => a.ts - b.ts)
 
-      const text = [
-        `📦 ${batch.length} 个任务完成`,
-        ...batch.map((it) => `  · [${it.project}] ${it.summary}`),
-      ].join('\n')
+      const text = truncate(
+        [
+          `📦 ${batch.length} 个任务完成`,
+          ...batch.map((it) => `  · [${it.project}] ${truncate(it.summary, MAX_SUMMARY)}`),
+        ].join('\n'),
+        MAX_AGG_TEXT,
+      )
 
       items = []
       lastFlushAt = now
