@@ -77,29 +77,19 @@ export function createPolicyEngine(deps: PolicyDeps): PolicyEngine {
 
       switch (ev.kind) {
         case 'quota': {
-          // 耗尽 / 重置归 tracker（含 notifiedExhausted / notifiedReset 去重）
+          // 耗尽 / 重置 / critical 归 tracker（含各去重标志）
           const notes = quotaTracker.process(ev, now)
-          // warn / critical 走 classify；100%（alert）已由 tracker 接管，不双发
+          // warn 走 classify（默认关闭，30min 冷却后续 issue 补）
           const sev = cls(ev)
-          if (sev === 'warn' || sev === 'critical') {
+          if (sev === 'warn') {
             const pct = Math.round(ev.window.usedPercent)
-            notes.push(
-              sev === 'critical'
-                ? {
-                    id: `quota-critical-${ev.ts}`,
-                    ts: now,
-                    severity: 'critical',
-                    text: `⚠️ 额度告急：已达 ${pct}%`,
-                    source: 'quotaCritical',
-                  }
-                : {
-                    id: `quota-warn-${ev.ts}`,
-                    ts: now,
-                    severity: 'warn',
-                    text: `⚠️ 额度预警：已达 ${pct}%`,
-                    source: 'quotaWarn',
-                  },
-            )
+            notes.push({
+              id: `quota-warn-${ev.ts}`,
+              ts: now,
+              severity: 'warn',
+              text: `⚠️ 额度预警：已达 ${pct}%`,
+              source: 'quotaWarn',
+            })
           }
           return gate(notes)
         }

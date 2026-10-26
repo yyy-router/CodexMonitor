@@ -136,4 +136,28 @@ describe('createQuotaTracker', () => {
     expect(notes).toHaveLength(1)
     expect(notes[0]!.source).toBe('quotaReset')
   })
+
+  it('critical（95–99%）每窗口只发一次：95 → 98 不重复', () => {
+    const t = createQuotaTracker(cfg)
+    const first = t.process(quota(300, 95, 1000, 1), 1)
+    expect(first).toHaveLength(1)
+    expect(first[0]!.severity).toBe('critical')
+    expect(first[0]!.source).toBe('quotaCritical')
+    // 同窗口用量继续爬升，不再重复 critical
+    expect(t.process(quota(300, 98, 1000, 2), 2)).toHaveLength(0)
+    // 但耗尽仍正常触发
+    const exhausted = t.process(quota(300, 100, 1000, 3), 3)
+    expect(exhausted).toHaveLength(1)
+    expect(exhausted[0]!.source).toBe('quotaExhausted')
+  })
+
+  it('重置后 critical 标志复位：新周期可重新 critical', () => {
+    const t = createQuotaTracker(cfg)
+    t.process(quota(300, 95, 1000, 1), 1) // critical
+    t.process(quota(300, 100, 1000, 2), 2) // exhausted
+    t.process(quota(300, 4, 2000, 3), 3) // 路径 A 重置
+    const notes = t.process(quota(300, 96, 2000, 4), 4)
+    expect(notes).toHaveLength(1)
+    expect(notes[0]!.source).toBe('quotaCritical')
+  })
 })

@@ -21,6 +21,8 @@ export type WindowState = {
   waiting: boolean
   notifiedExhausted: boolean
   notifiedReset: boolean
+  /** 本周期是否已发过 critical（95–99%），每窗口一次 */
+  notifiedCritical: boolean
   /** 最近一次通知重置时对应的 resetsAt；同一周期不再重复耗尽/重置 */
   lastResetResetsAt: number | null
   /** 已处理事件的最大 ts，丢弃陈旧事件（多窗口必需） */
@@ -83,6 +85,14 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
     source: 'quotaReset',
   })
 
+  const critical = (wm: 300 | 10080, p: number, ts: number, now: number): Notification => ({
+    id: `quota-critical-${wm}-${ts}`,
+    ts: now,
+    severity: 'critical',
+    text: `⚠️ ${LABEL[wm]}额度告急：已达 ${Math.round(p)}%`,
+    source: 'quotaCritical',
+  })
+
   return {
     process(ev, now) {
       const wm = ev.window.windowMinutes
@@ -105,6 +115,7 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
           waiting: false,
           notifiedExhausted: false,
           notifiedReset: false,
+          notifiedCritical: false,
           lastResetResetsAt: null,
           lastProcessedTs: ts,
           lastUpdatedAt: now,
@@ -121,6 +132,8 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
       s.lastProcessedTs = ts
       s.lastUpdatedAt = now
 
+      const notes: Notification[] = []
+
       // 耗尽：进入等待状态 + 推 alert（notifiedExhausted 去重）
       // 同一重置周期（resetsAt 未超过已通知重置的值）不再重复耗尽
       const sameResetPeriod =
@@ -129,7 +142,17 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
         s.waiting = true
         s.notifiedExhausted = true
         s.notifiedReset = false
-        return [exhausted(wm, p, now)]
+        notes.push(exhausted(wm, p, now))
+      }
+
+      // critical（95–99%，每窗口一次）：用量告急但未耗尽
+      if (
+        p >= cfg.thresholds.quotaCritical &&
+        p < cfg.thresholds.quotaExhausted &&
+        !s.notifiedCritical
+      ) {
+        s.notifiedCritical = true
+        notes.push(critical(wm, p, ts, now))
       }
 
       // 路径 A：用量 ≥90 → <50 且 resetsAt 变大 且 此前 waiting
@@ -144,11 +167,12 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
         s.waiting = false
         s.notifiedReset = true
         s.notifiedExhausted = false
+        s.notifiedCritical = false
         s.lastResetResetsAt = resetsAt
-        return [resetA(wm, p, now)]
+        notes.push(resetA(wm, p, now))
       }
 
-      return []
+      return notes
     },
 
     tick(now) {
@@ -161,6 +185,7 @@ export function createQuotaTracker(cfg: QuotaTrackerConfig): QuotaTracker {
           s.waiting = false
           s.notifiedReset = true
           s.notifiedExhausted = false
+          s.notifiedCritical = false
           s.lastResetResetsAt = s.resetsAt
           notes.push(resetB(wm, now))
         }
