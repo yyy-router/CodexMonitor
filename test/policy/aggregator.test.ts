@@ -91,4 +91,10 @@ describe('createAggregator', () => {
     expect(n!.text.length).toBeLessThanOrEqual(2000)
     expect(n!.text).toContain('…') // 有截断标记
   })
+
+  it('add 时 trim 到 maxItems，待聚合数不超上限（防内存累积）', () => {
+    const a = createAggregator({ minIntervalMs: 1000, maxItems: 3, maxPerDay: 4 })
+    for (let i = 0; i < 10; i++) a.add(item('p', `t${i}`, i), 0)
+    expect(a.pendingCount()).toBe(3)
+  })
 })

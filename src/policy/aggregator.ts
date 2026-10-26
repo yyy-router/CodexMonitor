@@ -22,6 +22,8 @@ export type Aggregator = {
   add(item: CompletedItem, now: number): void
   /** 满足条件时产出聚合通知，否则返回 null */
   maybeFlush(now: number): Notification | null
+  /** 当前待聚合的任务数（可观测性/调试） */
+  pendingCount(): number
 }
 
 /** 聚合消息硬上限：超过即分片（每片占 1 条配额），必须主动控制长度 */
@@ -40,6 +42,14 @@ export function createAggregator(cfg: AggregatorConfig): Aggregator {
   return {
     add(item: CompletedItem, _now: number): void {
       items.push(item)
+      // 超 maxItems 时按 ts 保留最新 N 条，丢弃更旧的（防 maxPerDay 后无限累积）
+      if (items.length > cfg.maxItems) {
+        items = [...items].sort((a, b) => b.ts - a.ts).slice(0, cfg.maxItems)
+      }
+    },
+
+    pendingCount(): number {
+      return items.length
     },
 
     maybeFlush(now: number): Notification | null {
