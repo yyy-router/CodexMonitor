@@ -48,8 +48,16 @@ function projectName(cwd: string): string {
 export function createPolicyEngine(deps: PolicyDeps): PolicyEngine {
   const { classify: cls, aggregator, quotaTracker, quotaGuard } = deps
 
-  const gate = (notes: Notification[]): Notification[] =>
-    quotaGuard ? notes.filter((n) => quotaGuard.canSend(n.severity)) : notes
+  const gate = (notes: Notification[]): Notification[] => {
+    if (!quotaGuard) return notes
+    // 批内模拟递减：多条消息不能共享同一 remaining 判断，否则会突破 reserveForAlerts
+    let budget = quotaGuard.remaining()
+    return notes.filter((n) => {
+      const ok = quotaGuard.canSend(n.severity, budget)
+      if (ok) budget -= 1
+      return ok
+    })
+  }
 
   return {
     onEvent(ev, now) {

@@ -17,8 +17,8 @@ import type { Config } from '../config.js'
 export type QuotaGuardConfig = Config['ilink']['quota']
 
 export type QuotaGuard = {
-  /** 按级别判断预算是否够发（alert/critical 永不被砍） */
-  canSend(severity: Severity): boolean
+  /** 按级别判断预算是否够发（alert/critical 永不被砍）。可传外部 budget 供批处理模拟递减 */
+  canSend(severity: Severity, budget?: number): boolean
   /** 投递结果回传：成功递减；errcode -2 → 归零静默 */
   onSent(result: DeliveryResult): void
   /** 入站消息 = 充值，remaining 回 perActivation */
@@ -31,11 +31,11 @@ export function createQuotaGuard(cfg: QuotaGuardConfig): QuotaGuard {
   let remaining = cfg.perActivation
 
   return {
-    canSend(severity) {
-      if (remaining <= 0) return false // 硬墙：耗尽后一律静默
+    canSend(severity, budget = remaining) {
+      if (budget <= 0) return false // 硬墙：耗尽后一律静默
       if (severity === 'alert' || severity === 'critical') return true
       // info / warn：只用 reserveForAlerts 之外的那部分预算
-      return remaining > cfg.reserveForAlerts
+      return budget > cfg.reserveForAlerts
     },
 
     onSent(result) {

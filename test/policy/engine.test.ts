@@ -4,7 +4,7 @@ import { createAggregator } from '../../src/policy/aggregator.js'
 import { createQuotaTracker } from '../../src/policy/quota-tracker.js'
 import { createQuotaGuard } from '../../src/policy/quota-guard.js'
 import { createPolicyEngine, type PolicyDeps } from '../../src/policy/engine.js'
-import type { CodexEvent, NetEvent } from '../../src/events.js'
+import type { CodexEvent, NetEvent, Notification } from '../../src/events.js'
 
 const thresholds = {
   quotaWarn: 80,
@@ -111,6 +111,37 @@ describe('createPolicyEngine', () => {
     expect(guard.remaining()).toBe(9)
     eng.onInbound({ userId: 'u', text: 'hi', ts: 1 })
     expect(guard.remaining()).toBe(10)
+  })
+
+  it('批量 tick：多条 info 批内递减预算，不突破 reserveForAlerts', () => {
+    const guard = createQuotaGuard({ perActivation: 10, reserveForAlerts: 6, autoReply: false })
+    for (let i = 0; i < 3; i++) guard.onSent({ ok: true }) // remaining → 7
+
+    const info = (id: string, source: string): Notification => ({
+      id,
+      ts: 0,
+      severity: 'info',
+      text: id,
+      source,
+    })
+    const eng = createPolicyEngine({
+      classify: () => null,
+      aggregator: {
+        add: () => {},
+        maybeFlush: () => info('agg', 'turnCompleteAggregated'),
+      },
+      quotaTracker: {
+        process: () => [],
+        tick: () => [info('r1', 'quotaReset'), info('r2', 'quotaReset')],
+        snapshot: () => ({}),
+        restore: () => {},
+      },
+      quotaGuard: guard,
+    })
+
+    const notes = eng.tick(0)
+    // remaining=7、reserve=6：info 只放行 1 条（7−6=1），其余被砍
+    expect(notes).toHaveLength(1)
   })
 
   it('无守卫（飞书）→ 恒放行', () => {

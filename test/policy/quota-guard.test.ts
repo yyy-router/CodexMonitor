@@ -68,4 +68,12 @@ describe('createQuotaGuard', () => {
     expect(g.canSend('critical')).toBe(false)
     expect(g.canSend('info')).toBe(false)
   })
+
+  it('canSend 支持外部预算（批处理）：按传入 budget 判断而非内部 remaining', () => {
+    const g = createQuotaGuard(cfg)
+    expect(g.canSend('info', 7)).toBe(true) // 7 > 6
+    expect(g.canSend('info', 6)).toBe(false) // 6 不大于 6
+    expect(g.canSend('alert', 1)).toBe(true) // alert 只需 > 0
+    expect(g.canSend('alert', 0)).toBe(false)
+  })
 })
