@@ -41,8 +41,8 @@ const PROBE_LABEL: Record<NetEvent['verdict'], string> = {
 
 /** 项目名取 cwd basename（兼容 win32 / posix，回归 #11） */
 function projectName(cwd: string): string {
-  const parts = cwd.split(/[\\/]/)
-  return parts[parts.length - 1] ?? cwd
+  const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || cwd
 }
 
 export function createPolicyEngine(deps: PolicyDeps): PolicyEngine {

@@ -148,4 +148,12 @@ describe('createPolicyEngine', () => {
     const eng = createPolicyEngine(makeDeps()) // 不注入 quotaGuard
     expect(eng.onEvent(turnAborted(), 0)).toHaveLength(1)
   })
+
+  it('cwd 尾部分隔符（如 /proj/）仍能取到项目名，不产出空串', () => {
+    const eng = createPolicyEngine(makeDeps())
+    const notes = eng.onEvent({ ...turnAborted(), cwd: '/proj/' }, 0)
+    expect(notes).toHaveLength(1)
+    expect(notes[0]!.text).toContain('proj')
+    expect(notes[0]!.text).not.toContain('[]')
+  })
 })
