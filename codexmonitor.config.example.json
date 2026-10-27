@@ -1,0 +1,17 @@
+{
+  "notify": {
+    "channel": "console"
+  },
+  "codex": {
+    "sessionsDir": "~/.codex/sessions"
+  },
+  "state": {
+    "dir": "~/.codexmonitor"
+  },
+  "feishu": {
+    "appId": "<your-app-id>",
+    "appSecret": "<your-app-secret>",
+    "email": "you@example.com",
+    "mobile": ""
+  }
+}

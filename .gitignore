@@ -10,3 +10,5 @@ docs/
 *.local.json
 .env
 .env.*
+# 本地配置含飞书 appSecret；提交模板请看 codexmonitor.config.example.json
+codexmonitor.config.json
