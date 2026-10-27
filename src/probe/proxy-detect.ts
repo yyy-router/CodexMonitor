@@ -1,18 +1,33 @@
 /**
- * 代理端口推导（§4.2）。
+ * 代理端点推导（§4.2）。
  *
  * 代理端口会漂移（7897 → 7890），写死必然失效。按序尝试，命中即用：
  *   1. 环境变量 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
  *   2. Windows 系统代理（注册表 ProxyServer）
  *   3. 常见端口探测（cfg.ports）
  *
- * 候选端口一律先做 TCP 探测，避免被失效的旧环境变量带偏。
+ * 只保留端口是不够的：SOCKS5 与 HTTP 代理的建连方式完全不同，带认证的代理
+ * 还需要凭据。因此返回完整端点（协议 + 主机 + 端口 + 可选凭据）。
+ *
+ * 候选端点一律先做 TCP 探测，避免被失效的旧环境变量带偏。
  * mode='manual' 表示用户显式指定，只探测 cfg.ports。
  */
 
 import { execFileSync } from 'node:child_process'
 import { connect } from 'node:net'
 import type { Config } from '../config.js'
+
+/** 探针支持的代理协议；https 指「到代理本身走 TLS」 */
+export type ProxyProtocol = 'http' | 'https' | 'socks5'
+
+export type ProxyEndpoint = {
+  protocol: ProxyProtocol
+  host: string
+  port: number
+  /** HTTP 代理的 Proxy-Authorization / SOCKS5 的用户名口令认证 */
+  username?: string
+  password?: string
+}
 
 export type ProxyDetectDeps = {
   /** 环境变量来源，默认 process.env */
@@ -34,8 +49,31 @@ const ENV_KEYS = [
 
 const REG_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 
-/** `http://u:p@host:7890` / `socks5://host:1080` / `host:7890` → 7890 / 1080 / 7890 */
-function parsePort(value: string): number | null {
+/** URL 协议 → 探针协议；不在表内的（socks4 等）不支持，直接跳过 */
+const PROTOCOL_MAP: Record<string, ProxyProtocol | undefined> = {
+  'http:': 'http',
+  'https:': 'https',
+  'socks5:': 'socks5',
+  'socks5h:': 'socks5',
+}
+
+/**
+ * 协议默认端口。
+ * WHATWG URL 会把 `http://host:80` 的端口规范化为空串，所以显式写出的默认端口
+ * 必须靠这张表补回来，否则跑在 80/443 上的代理会被静默跳过。
+ */
+const DEFAULT_PORT: Record<string, number> = {
+  'http:': 80,
+  'https:': 443,
+  'socks5:': 1080,
+  'socks5h:': 1080,
+}
+
+/** URL 的 hostname 对 IPv6 带方括号；socket 连接与比较需要裸地址 */
+const stripBrackets = (host: string): string => host.replace(/^\[|\]$/g, '')
+
+/** `http://u:p@host:7890` / `socks5://host:1080` / `host:7890` → 端点 */
+function parseEndpoint(value: string): ProxyEndpoint | null {
   const v = value.trim()
   if (v === '') return null
   let url: URL
@@ -44,20 +82,31 @@ function parsePort(value: string): number | null {
   } catch {
     return null
   }
-  if (url.port === '') return null
-  const port = Number(url.port)
-  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null
+  const protocol = PROTOCOL_MAP[url.protocol]
+  if (!protocol) return null
+
+  const host = stripBrackets(url.hostname)
+  if (host === '') return null
+
+  const portText = url.port !== '' ? url.port : String(DEFAULT_PORT[url.protocol] ?? '')
+  const port = Number(portText)
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
+
+  const endpoint: ProxyEndpoint = { protocol, host, port }
+  if (url.username !== '') endpoint.username = decodeURIComponent(url.username)
+  if (url.password !== '') endpoint.password = decodeURIComponent(url.password)
+  return endpoint
 }
 
 /** 注册表可能是 `http=127.0.0.1:7890;https=127.0.0.1:7891`，逐段解析 */
-function parseProxyValue(raw: string): number[] {
-  const ports: number[] = []
+function parseProxyValue(raw: string): ProxyEndpoint[] {
+  const endpoints: ProxyEndpoint[] = []
   for (const seg of raw.split(/[;,]/)) {
     const eq = seg.indexOf('=')
-    const port = parsePort(eq >= 0 ? seg.slice(eq + 1) : seg)
-    if (port != null) ports.push(port)
+    const endpoint = parseEndpoint(eq >= 0 ? seg.slice(eq + 1) : seg)
+    if (endpoint) endpoints.push(endpoint)
   }
-  return ports
+  return endpoints
 }
 
 /** 读 Windows 系统代理；未启用 / 非 Windows / 读取失败均返回 null */
@@ -96,16 +145,16 @@ function probeTcpPort(port: number, timeoutMs = 500): Promise<boolean> {
   })
 }
 
-/** 返回推导出的代理端口；推导失败返回 null */
-export async function detectProxyPort(
+/** 返回推导出的代理端点；推导失败返回 null */
+export async function detectProxy(
   cfg: Config['probe']['proxy'],
   deps: ProxyDetectDeps = {},
-): Promise<number | null> {
+): Promise<ProxyEndpoint | null> {
   const env = deps.env ?? process.env
   const readRegistry = deps.readRegistryProxy ?? readWindowsRegistryProxy
   const probe = deps.probeTcp ?? probeTcpPort
 
-  const candidates: number[] = []
+  const candidates: ProxyEndpoint[] = []
   if (cfg.mode === 'auto') {
     for (const key of ENV_KEYS) {
       const raw = env[key]
@@ -114,13 +163,16 @@ export async function detectProxyPort(
     const registry = readRegistry()
     if (registry) candidates.push(...parseProxyValue(registry))
   }
-  candidates.push(...cfg.ports)
+  for (const port of cfg.ports) {
+    candidates.push({ protocol: 'http', host: '127.0.0.1', port })
+  }
 
-  const seen = new Set<number>()
-  for (const port of candidates) {
-    if (seen.has(port)) continue
-    seen.add(port)
-    if (await probe(port)) return port
+  const seen = new Set<string>()
+  for (const endpoint of candidates) {
+    const key = `${endpoint.host}:${endpoint.port}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (await probe(endpoint.port)) return endpoint
   }
   return null
 }
