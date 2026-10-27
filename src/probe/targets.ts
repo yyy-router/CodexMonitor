@@ -10,15 +10,18 @@
  * deriveVerdict 是纯函数（真值表），probeOnce 是 IO。
  *
  * 实现上只用 node:net / node:tls 手搓 HTTP/1.1，不引第三方代理库：
- *   - 经代理：先 CONNECT 建隧道，https 再套 TLS
+ *   - HTTP(S) 代理：https 目标走 CONNECT 隧道；http 目标走 absolute-form（不建隧道，
+ *     因为部分代理只允许 CONNECT 到 443）
+ *   - SOCKS5 代理：握手后同样得到隧道
  *   - 直连：直接连目标，https 套 TLS
  * 只读状态行（不读 body），拿到首行即断定「通」，延迟 = 首行耗时。
  */
 
-import { connect as netConnect, type Socket } from 'node:net'
+import { connect as netConnect, isIP, type Socket } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import type { ProbeVerdict } from '../events.js'
 import type { Config } from '../config.js'
+import type { ProxyEndpoint } from './proxy-detect.js'
 
 export type LayerResult = {
   ok: boolean
@@ -34,9 +37,22 @@ export type ProbeResult = {
   verdict: ProbeVerdict
 }
 
-const PROXY_HOST = '127.0.0.1'
-/** 单层响应的状态行读取上限，防止恶意/异常响应撑爆内存 */
+/** 探测依赖注入：测试用自签证书注入 CA；企业 TLS 拦截场景也可用 */
+export type ProbeDeps = {
+  ca?: string | Buffer | Array<string | Buffer>
+}
+
+/** 单层响应的头部读取上限，防止异常响应撑爆内存 */
 const MAX_HEADER = 8192
+
+/** URL 的 hostname 对 IPv6 带方括号；socket 连接需要裸地址 */
+const stripBrackets = (host: string): string => host.replace(/^\[|\]$/g, '')
+
+const proxyAuthHeader = (proxy: ProxyEndpoint | null): string | undefined => {
+  if (!proxy || proxy.username == null) return undefined
+  const raw = `${proxy.username}:${proxy.password ?? ''}`
+  return `Basic ${Buffer.from(raw, 'utf8').toString('base64')}`
+}
 
 /** 由 L1/L2/L3 结果推判定（纯函数，真值表见 §4.2） */
 export function deriveVerdict(
@@ -82,9 +98,14 @@ function openTcp(host: string, port: number, timeoutMs: number): Promise<Socket>
   })
 }
 
-function upgradeTls(socket: Socket, servername: string, timeoutMs: number): Promise<Socket> {
+function upgradeTls(
+  socket: Socket,
+  servername: string,
+  timeoutMs: number,
+  deps: ProbeDeps,
+): Promise<Socket> {
   return new Promise((resolve, reject) => {
-    const tls = tlsConnect({ socket, servername })
+    const tls = tlsConnect({ socket, servername, ca: deps.ca })
     const timer = setTimeout(() => {
       tls.destroy()
       reject(new Error('tls timeout'))
@@ -101,10 +122,16 @@ function upgradeTls(socket: Socket, servername: string, timeoutMs: number): Prom
   })
 }
 
-/** 经 HTTP 代理建 CONNECT 隧道；非 200 视为失败 */
-function openTunnel(socket: Socket, host: string, port: number, timeoutMs: number): Promise<void> {
+/** 发 CONNECT 建立隧道；非 200（含代理认证失败 407）视为失败 */
+function openTunnel(
+  socket: Socket,
+  authority: string,
+  proxy: ProxyEndpoint,
+  timeoutMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     let buf = ''
+    const auth = proxyAuthHeader(proxy)
     const cleanup = () => {
       socket.off('data', onData)
       socket.off('error', onError)
@@ -139,12 +166,24 @@ function openTunnel(socket: Socket, host: string, port: number, timeoutMs: numbe
     socket.on('data', onData)
     socket.once('error', onError)
     socket.once('close', onClose)
-    socket.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n\r\n`)
+    socket.write(
+      `CONNECT ${authority} HTTP/1.1\r\n` +
+        `Host: ${authority}\r\n` +
+        (auth ? `Proxy-Authorization: ${auth}\r\n` : '') +
+        '\r\n',
+    )
   })
 }
 
-/** 发 GET，读到状态行即返回状态码 */
-function requestStatus(socket: Socket, url: URL, ua: string, timeoutMs: number): Promise<number> {
+/** 发请求，读到状态行即返回状态码 */
+function requestStatus(
+  socket: Socket,
+  url: URL,
+  requestTarget: string,
+  auth: string | undefined,
+  ua: string,
+  timeoutMs: number,
+): Promise<number> {
   return new Promise((resolve, reject) => {
     let buf = ''
     const cleanup = () => {
@@ -182,10 +221,10 @@ function requestStatus(socket: Socket, url: URL, ua: string, timeoutMs: number):
     socket.once('error', onError)
     socket.once('close', onClose)
 
-    const hostHeader = url.port !== '' ? `${url.hostname}:${url.port}` : url.hostname
     socket.write(
-      `GET ${url.pathname}${url.search} HTTP/1.1\r\n` +
-        `Host: ${hostHeader}\r\n` +
+      `GET ${requestTarget} HTTP/1.1\r\n` +
+        `Host: ${url.host}\r\n` +
+        (auth ? `Proxy-Authorization: ${auth}\r\n` : '') +
         `User-Agent: ${ua}\r\n` +
         'Accept: */*\r\n' +
         'Connection: close\r\n\r\n',
@@ -193,12 +232,133 @@ function requestStatus(socket: Socket, url: URL, ua: string, timeoutMs: number):
   })
 }
 
+// ---- SOCKS5（RFC 1928）最小实现 ----
+
+type Reader = { read(n: number): Promise<Buffer>; dispose(): void }
+
+function createReader(socket: Socket): Reader {
+  let buf = Buffer.alloc(0)
+  let wake: (() => void) | null = null
+  let closed = false
+  const onData = (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk])
+    wake?.()
+  }
+  const onClose = () => {
+    closed = true
+    wake?.()
+  }
+  const onError = () => {
+    closed = true
+    wake?.()
+  }
+  socket.on('data', onData)
+  socket.once('close', onClose)
+  socket.once('error', onError)
+
+  return {
+    async read(n: number): Promise<Buffer> {
+      while (buf.length < n) {
+        if (closed) throw new Error('socket closed during handshake')
+        await new Promise<void>((resolve) => {
+          wake = resolve
+          // 事件循环单线程：若数据已在缓冲里或 socket 已关闭，这里同步放行
+          if (closed || buf.length >= n) {
+            wake = null
+            resolve()
+          }
+        })
+      }
+      const out = buf.subarray(0, n)
+      buf = buf.subarray(n)
+      return out
+    },
+    dispose(): void {
+      socket.off('data', onData)
+      socket.off('close', onClose)
+      socket.off('error', onError)
+    },
+  }
+}
+
+const SOCKS5_ERRORS: Record<number, string> = {
+  1: 'general failure',
+  2: 'not allowed by ruleset',
+  3: 'network unreachable',
+  4: 'host unreachable',
+  5: 'connection refused',
+  6: 'TTL expired',
+  7: 'command not supported',
+  8: 'address type not supported',
+}
+
+/** SOCKS5 握手 + CONNECT；结束后 socket 即为到目标的隧道 */
+async function socks5Connect(
+  socket: Socket,
+  host: string,
+  port: number,
+  proxy: ProxyEndpoint,
+): Promise<void> {
+  const reader = createReader(socket)
+  try {
+    const withAuth = proxy.username != null
+    socket.write(Buffer.from(withAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00]))
+
+    const greet = await reader.read(2)
+    if (greet[0] !== 0x05) throw new Error('not a SOCKS5 proxy')
+    const method = greet[1]
+    if (method === 0xff) throw new Error('socks5: no acceptable auth method')
+
+    if (method === 0x02) {
+      const user = Buffer.from(proxy.username ?? '', 'utf8')
+      const pass = Buffer.from(proxy.password ?? '', 'utf8')
+      socket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]))
+      const auth = await reader.read(2)
+      if (auth[0] !== 0x01 || auth[1] !== 0x00) throw new Error('socks5: auth failed')
+    } else if (method !== 0x00) {
+      throw new Error(`socks5: unsupported method ${method}`)
+    }
+
+    const request: number[] = [0x05, 0x01, 0x00]
+    const ipType = isIP(host)
+    if (ipType === 4) {
+      request.push(0x01, ...host.split('.').map(Number))
+    } else if (ipType === 6) {
+      // 纯 IPv6 字面量转 16 字节过于繁琐；按域名下发，代理会自行解析
+      const name = Buffer.from(host, 'utf8')
+      request.push(0x03, name.length, ...name)
+    } else {
+      const name = Buffer.from(host, 'utf8')
+      request.push(0x03, name.length, ...name)
+    }
+    request.push(port >> 8, port & 0xff)
+    socket.write(Buffer.from(request))
+
+    const head = await reader.read(4)
+    if (head[0] !== 0x05) throw new Error('socks5: bad reply version')
+    const rep = head[1]!
+    if (rep !== 0x00) throw new Error(`socks5: ${SOCKS5_ERRORS[rep] ?? `error ${rep}`}`)
+
+    // 消费绑定地址与端口，保证隧道起点对齐
+    const atyp = head[3]
+    if (atyp === 0x01) await reader.read(4 + 2)
+    else if (atyp === 0x03) {
+      const len = (await reader.read(1))[0]!
+      await reader.read(len + 2)
+    } else if (atyp === 0x04) await reader.read(16 + 2)
+    else throw new Error(`socks5: unsupported address type ${String(atyp)}`)
+  } finally {
+    reader.dispose()
+  }
+}
+
 /** 一轮 HTTP 探测；任何异常都收敛成 ok=false，绝不抛出 */
 async function probeHttp(
   target: string,
-  proxyPort: number | null,
+  proxy: ProxyEndpoint | null,
   ua: string,
   timeoutMs: number,
+  deps: ProbeDeps,
 ): Promise<LayerResult> {
   const startedAt = Date.now()
   const deadline = startedAt + timeoutMs
@@ -206,26 +366,40 @@ async function probeHttp(
   let socket: Socket | undefined
   try {
     const url = new URL(target)
+    const host = stripBrackets(url.hostname)
     const port = url.port !== '' ? Number(url.port) : url.protocol === 'https:' ? 443 : 80
-    const viaProxy = proxyPort != null
+    const https = url.protocol === 'https:'
 
-    socket = await withTimeout(
-      openTcp(
-        viaProxy ? PROXY_HOST : url.hostname,
-        proxyPort != null ? proxyPort : port,
-        timeoutMs,
-      ),
+    if (proxy) {
+      socket = await withTimeout(openTcp(proxy.host, proxy.port, timeoutMs), remaining())
+      if (proxy.protocol === 'https') {
+        socket = await withTimeout(upgradeTls(socket, proxy.host, remaining(), deps), remaining())
+      }
+      if (proxy.protocol === 'socks5') {
+        await withTimeout(socks5Connect(socket, host, port, proxy), remaining())
+      } else if (https) {
+        await withTimeout(openTunnel(socket, `${url.hostname}:${port}`, proxy, remaining()), remaining())
+      }
+      // http 目标经 HTTP(S) 代理：absolute-form 直发，不建隧道
+    } else {
+      socket = await withTimeout(openTcp(host, port, timeoutMs), remaining())
+    }
+
+    if (https) {
+      socket = await withTimeout(upgradeTls(socket, host, remaining(), deps), remaining())
+    }
+
+    const viaHttpProxy = proxy != null && proxy.protocol !== 'socks5'
+    const absoluteForm = viaHttpProxy && !https
+    const requestTarget = absoluteForm ? url.href : `${url.pathname}${url.search}`
+    const status = await withTimeout(
+      requestStatus(socket, url, requestTarget, viaHttpProxy ? proxyAuthHeader(proxy) : undefined, ua, remaining()),
       remaining(),
     )
-    if (viaProxy) {
-      await withTimeout(openTunnel(socket, url.hostname, port, remaining()), remaining())
-    }
-    if (url.protocol === 'https:') {
-      socket = await withTimeout(upgradeTls(socket, url.hostname, remaining()), remaining())
-    }
-
-    const status = await withTimeout(requestStatus(socket, url, ua, remaining()), remaining())
-    return { ok: status > 0, status, latencyMs: Date.now() - startedAt }
+    // absolute-form 下 407 / 5xx 由代理生成（认证失败、上游不可达），请求并没有到目标；
+    // 不能按「任何状态码都算通」处理
+    const proxyRejected = absoluteForm && (status === 407 || status >= 500)
+    return { ok: status > 0 && !proxyRejected, status, latencyMs: Date.now() - startedAt }
   } catch {
     return { ok: false, status: 0, latencyMs: null }
   } finally {
@@ -234,10 +408,10 @@ async function probeHttp(
 }
 
 /** L1：能否 TCP 连上本地代理端口 */
-async function probeTcp(port: number, timeoutMs: number): Promise<LayerResult> {
+async function probeTcp(proxy: ProxyEndpoint, timeoutMs: number): Promise<LayerResult> {
   const startedAt = Date.now()
   try {
-    const socket = await openTcp(PROXY_HOST, port, timeoutMs)
+    const socket = await openTcp(proxy.host, proxy.port, timeoutMs)
     socket.destroy()
     return { ok: true, status: null, latencyMs: Date.now() - startedAt }
   } catch {
@@ -247,13 +421,18 @@ async function probeTcp(port: number, timeoutMs: number): Promise<LayerResult> {
 
 /** 跑一轮三层探测（IO）；三层并行，任一失败不影响其余 */
 export async function probeOnce(
-  proxyPort: number,
+  proxy: ProxyEndpoint | null,
   cfg: Config['probe'],
+  deps: ProbeDeps = {},
 ): Promise<ProbeResult> {
+  const missed: LayerResult = { ok: false, status: 0, latencyMs: null }
   const [l1, l2, l3] = await Promise.all([
-    probeTcp(proxyPort, cfg.timeoutMs),
-    probeHttp(cfg.targets.l2, proxyPort, cfg.userAgent, cfg.timeoutMs),
-    probeHttp(cfg.targets.l3, null, cfg.userAgent, cfg.timeoutMs),
+    proxy ? probeTcp(proxy, cfg.timeoutMs) : Promise.resolve({ ...missed, status: null }),
+    // 没有代理端点时 L2 无从谈起，直接判失败（不可退化成直连）
+    proxy
+      ? probeHttp(cfg.targets.l2, proxy, cfg.userAgent, cfg.timeoutMs, deps)
+      : Promise.resolve(missed),
+    probeHttp(cfg.targets.l3, null, cfg.userAgent, cfg.timeoutMs, deps),
   ])
   return { l1, l2, l3, verdict: deriveVerdict({ l1, l2, l3 }, cfg.slowThresholdMs) }
 }
