@@ -20,6 +20,7 @@ import { createPolicyEngine } from './policy/engine.js'
 import { createTailer } from './watcher/tailer.js'
 import { parseLine, parseSessionMeta } from './watcher/parse.js'
 import { FeishuNotifier } from './notify/feishu-notifier.js'
+import { ConsoleNotifier } from './notify/console-notifier.js'
 import { createDeliveryLog } from './notify/delivery-log.js'
 import { createStateStore } from './store/state-store.js'
 import { detectProxy } from './probe/proxy-detect.js'
@@ -60,9 +61,11 @@ export function createNotifier(cfg: Config): Notifier {
         email: cfg.feishu.email,
         mobile: cfg.feishu.mobile,
       })
+    case 'console':
+      return new ConsoleNotifier()
     case 'ilink':
       throw new Error(
-        "iLink 通道尚未实现（本轮不兼容 iLink），请把 notify.channel 设为 'feishu'",
+        "iLink 通道尚未实现（本轮不兼容 iLink），请把 notify.channel 设为 'feishu' 或 'console'",
       )
   }
 }

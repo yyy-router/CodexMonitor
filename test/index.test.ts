@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import path from 'node:path'
 import { main, createNotifier, expandHome } from '../src/index.js'
+import { ConsoleNotifier } from '../src/notify/console-notifier.js'
 import { DEFAULT_CONFIG, type Config } from '../src/config.js'
 import type { Notifier } from '../src/notify/notifier.js'
 import type { ProbeResult } from '../src/probe/targets.js'
@@ -45,6 +46,14 @@ describe('createNotifier', () => {
       notify: { ...DEFAULT_CONFIG.notify, channel: 'ilink' },
     }
     expect(() => createNotifier(cfg)).toThrow(/iLink/)
+  })
+
+  it("channel='console' 返回控制台通道（本地验证用，无需凭证）", () => {
+    const cfg: Config = {
+      ...DEFAULT_CONFIG,
+      notify: { ...DEFAULT_CONFIG.notify, channel: 'console' },
+    }
+    expect(createNotifier(cfg)).toBeInstanceOf(ConsoleNotifier)
   })
 
   it("channel='feishu' 返回可用通道", () => {

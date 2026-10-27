@@ -7,8 +7,8 @@
 
 import { readFileSync } from 'node:fs'
 
-/** 推送通道判别：ilink（微信 iLink）或 feishu */
-export type Channel = 'ilink' | 'feishu'
+/** 推送通道判别：ilink（微信 iLink）、feishu、console（本地验证，打印到 stdout） */
+export type Channel = 'ilink' | 'feishu' | 'console'
 
 export type Config = {
   codex: {
@@ -153,8 +153,8 @@ function deepMerge(base: unknown, override: unknown): unknown {
 /** 校验必填项：channel 枚举 + feishu 凭证完备性。其余字段超出范围，不逐项校验。 */
 function validate(cfg: Config): void {
   const ch = cfg.notify.channel
-  if (ch !== 'ilink' && ch !== 'feishu') {
-    throw new Error(`notify.channel 必须是 'ilink' 或 'feishu'，实际 '${String(ch)}'`)
+  if (ch !== 'ilink' && ch !== 'feishu' && ch !== 'console') {
+    throw new Error(`notify.channel 必须是 'ilink' / 'feishu' / 'console'，实际 '${String(ch)}'`)
   }
   if (ch === 'feishu') {
     const f = cfg.feishu
