@@ -40,6 +40,8 @@ export type MainDeps = {
   log?: (line: string) => void
   /** 测试注入：触发后优雅退出；缺省监听 SIGINT / SIGTERM */
   signal?: AbortSignal
+  /** tick 循环间隔（毫秒），默认 1000；集成测试可缩短 */
+  tickIntervalMs?: number
 }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -197,7 +199,7 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
 
   tickTimer = setInterval(() => {
     void onTick()
-  }, TICK_INTERVAL_MS)
+  }, deps.tickIntervalMs ?? TICK_INTERVAL_MS)
 
   if (cfg.probe.enabled) scheduleProbe(cfg.probe.intervalMs)
 
