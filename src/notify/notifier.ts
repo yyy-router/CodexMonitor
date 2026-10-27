@@ -31,7 +31,52 @@ export interface Notifier {
   onInbound?(handler: (msg: InboundMessage) => void): void
 }
 
-/** 长消息分片：超 maxLen 按 \n\n → \n → 空格优先级切分（§4.5）。每片占 1 条配额 */
-export function splitLongMessage(_text: string, _maxLen = 2000): string[] {
-  throw new Error('Not implemented: splitLongMessage')
+/** 分片优先级：空行 > 换行 > 空格 > 硬切 */
+const SPLIT_SEPARATORS = ['\n\n', '\n', ' '] as const
+
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
+
+/**
+ * 长消息分片：超 maxLen 按 \n\n → \n → 空格优先级切分（§4.5）。每片占 1 条配额。
+ *
+ * - 每片长度必 ≤ maxLen（超长会被通道拒绝，或被拆成更多片）
+ * - 不产出空白分片（白烧配额）
+ * - 硬切时不切断 UTF-16 代理对（否则 emoji 变乱码）
+ */
+export function splitLongMessage(text: string, maxLen = 2000): string[] {
+  if (!Number.isInteger(maxLen) || maxLen <= 0) {
+    throw new RangeError(`maxLen 必须是正整数，实际 ${maxLen}`)
+  }
+  if (text.trim() === '') return []
+  if (text.length <= maxLen) return [text]
+
+  const chunks: string[] = []
+  let rest = text
+  while (rest.length > maxLen) {
+    let cut = -1
+    for (const sep of SPLIT_SEPARATORS) {
+      // 只在上限之内找分隔符；起点为 0 时放弃（否则首片会是空的）
+      const idx = rest.lastIndexOf(sep, maxLen - 1)
+      if (idx > 0) {
+        cut = idx + sep.length
+        break
+      }
+    }
+    if (cut <= 0) {
+      cut = maxLen
+      if (isHighSurrogate(rest.charCodeAt(cut - 1))) cut -= 1
+      // maxLen=1 且首字符是代理对：切不出任何一片。不抛的话 rest.slice(0) 原地不动，同步死循环
+      if (cut <= 0) {
+        throw new RangeError(`maxLen=${maxLen} 太小，无法在不拆分代理对的情况下切分`)
+      }
+    }
+
+    const chunk = rest.slice(0, cut).trimEnd()
+    if (chunk !== '') chunks.push(chunk)
+    rest = rest.slice(cut)
+  }
+
+  const tail = rest.trimEnd()
+  if (tail !== '') chunks.push(tail)
+  return chunks
 }
