@@ -11,6 +11,7 @@
 
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { loadConfig, type Config } from './config.js'
 import { classify } from './policy/classify.js'
 import { createAggregator } from './policy/aggregator.js'
@@ -209,4 +210,15 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
     signal.addEventListener('abort', () => resolve(), { once: true })
   })
   await stop()
+}
+
+/** 仅在直接执行 dist/index.js 时启动；被测试 import 时不触发 */
+const invokedDirectly =
+  process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (invokedDirectly) {
+  void main().catch((e) => {
+    console.error(`[codexmonitor] 启动失败：${errText(e)}`)
+    process.exitCode = 1
+  })
 }
