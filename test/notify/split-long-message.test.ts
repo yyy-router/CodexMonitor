@@ -77,6 +77,15 @@ describe('splitLongMessage', () => {
     expect(chunks.join('')).toBe(text)
   })
 
+  it('maxLen=2 时 emoji 恰好一片一个', () => {
+    expect(splitLongMessage('😀😀', 2)).toEqual(['😀', '😀'])
+  })
+
+  it('maxLen 小到无法容纳代理对 → 抛 RangeError 而不是死循环', () => {
+    expect(() => splitLongMessage('😀', 1)).toThrow(RangeError)
+    expect(() => splitLongMessage('😀😀', 1)).toThrow(RangeError)
+  })
+
   it('非法 maxLen 抛 RangeError', () => {
     expect(() => splitLongMessage('x', 0)).toThrow(RangeError)
     expect(() => splitLongMessage('x', -1)).toThrow(RangeError)

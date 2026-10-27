@@ -65,6 +65,10 @@ export function splitLongMessage(text: string, maxLen = 2000): string[] {
     if (cut <= 0) {
       cut = maxLen
       if (isHighSurrogate(rest.charCodeAt(cut - 1))) cut -= 1
+      // maxLen=1 且首字符是代理对：切不出任何一片。不抛的话 rest.slice(0) 原地不动，同步死循环
+      if (cut <= 0) {
+        throw new RangeError(`maxLen=${maxLen} 太小，无法在不拆分代理对的情况下切分`)
+      }
     }
 
     const chunk = rest.slice(0, cut).trimEnd()
