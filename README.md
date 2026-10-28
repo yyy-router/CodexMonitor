@@ -56,9 +56,13 @@ npm start
 
 ### 切换到飞书
 
-1. 在飞书开放平台创建**企业自建应用**，开通机器人能力
-2. 把 `notify.channel` 改为 `"feishu"`
-3. 填写 `feishu.appId`、`feishu.appSecret`，以及用于解析 open_id 的 `feishu.email` 或 `feishu.mobile`（邮箱优先）
+1. 在 **[飞书开放平台 · 开发者后台](https://open.feishu.cn/app)** 创建**企业自建应用**，并开通「机器人」能力（[机器人能力说明](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/bot-v3/bot-overview)）
+2. 在「凭证与基础信息」页获取 `App ID` / `App Secret`
+3. 在「权限管理」中开通发送单聊消息、通过邮箱/手机号查询用户所需的权限，并发布应用版本
+4. 把 `notify.channel` 改为 `"feishu"`，填写 `feishu.appId`、`feishu.appSecret`
+5. 填写 `feishu.email` 或 `feishu.mobile`（用于解析 open_id，邮箱优先）；该用户需在应用可用范围内
+
+> 参考：[开放平台控制台](https://open.feishu.cn/app) · [机器人能力说明](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/bot-v3/bot-overview) · [开发者文档](https://open.feishu.cn/document/home/index)
 
 ```json
 {
