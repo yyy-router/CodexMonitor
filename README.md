@@ -9,7 +9,7 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)](#开发)
-[![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](#技术选型)
+[![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](#当前状态)
 [![License](https://img.shields.io/badge/license-ISC-blue)](#许可)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](#已知限制)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#)
