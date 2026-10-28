@@ -7,8 +7,8 @@
 
 import { readFileSync } from 'node:fs'
 
-/** 推送通道判别：ilink（微信 iLink）或 feishu */
-export type Channel = 'ilink' | 'feishu'
+/** 推送通道判别：ilink（微信 iLink）、feishu、console（本地验证，打印到 stdout） */
+export type Channel = 'ilink' | 'feishu' | 'console'
 
 export type Config = {
   codex: {
@@ -101,7 +101,10 @@ export const DEFAULT_CONFIG: Config = {
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36',
     targets: {
-      l2: 'https://chatgpt.com/',
+      // Codex 真实端点（config.toml: wire_api = "responses"）；未认证返回 401，
+      // 能区分「链路可达」与「被 Cloudflare 拦截（403）」
+      l2: 'https://api.openai.com/v1/responses',
+      // 辅助信息：直连可达性，不参与代理模式下的故障归因
       l3: 'https://registry.npmmirror.com/',
     },
     proxy: { mode: 'auto', ports: [7890, 7891, 7892, 7897, 10808, 1080] },
@@ -153,8 +156,8 @@ function deepMerge(base: unknown, override: unknown): unknown {
 /** 校验必填项：channel 枚举 + feishu 凭证完备性。其余字段超出范围，不逐项校验。 */
 function validate(cfg: Config): void {
   const ch = cfg.notify.channel
-  if (ch !== 'ilink' && ch !== 'feishu') {
-    throw new Error(`notify.channel 必须是 'ilink' 或 'feishu'，实际 '${String(ch)}'`)
+  if (ch !== 'ilink' && ch !== 'feishu' && ch !== 'console') {
+    throw new Error(`notify.channel 必须是 'ilink' / 'feishu' / 'console'，实际 '${String(ch)}'`)
   }
   if (ch === 'feishu') {
     const f = cfg.feishu

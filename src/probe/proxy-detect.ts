@@ -3,14 +3,17 @@
  *
  * 代理端口会漂移（7897 → 7890），写死必然失效。按序尝试，命中即用：
  *   1. 环境变量 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
- *   2. Windows 系统代理（注册表 ProxyServer）
- *   3. 常见端口探测（cfg.ports）
+ *   2. Windows 系统代理（注册表 ProxyServer，且 ProxyEnable=1）
+ *
+ * **auto 模式不再回退扫常见端口**：否则会在「系统代理已关、环境变量也已清空」
+ * 时仍然找到一个本地代理并报 ok，而 Codex 实际走直连、完全不可用。两者都没有
+ * 时返回 null，由上层按直连探测（匹配 Codex 的真实行为）。
+ * mode='manual' 表示用户显式指定，只探测 cfg.ports。
  *
  * 只保留端口是不够的：SOCKS5 与 HTTP 代理的建连方式完全不同，带认证的代理
  * 还需要凭据。因此返回完整端点（协议 + 主机 + 端口 + 可选凭据）。
  *
  * 候选端点一律先做 TCP 探测，避免被失效的旧环境变量带偏。
- * mode='manual' 表示用户显式指定，只探测 cfg.ports。
  */
 
 import { execFileSync } from 'node:child_process'
@@ -28,6 +31,17 @@ export type ProxyEndpoint = {
   username?: string
   password?: string
 }
+
+/**
+ * 代理发现结果。null 不足以表达三种状态：
+ *   found       —— 找到可连的代理，按代理模式探测
+ *   unreachable —— 配置/候选存在但都连不上（应判「代理程序未运行」）
+ *   none        —— 没有任何代理配置（Codex 会走直连，按直连模式探测）
+ */
+export type ProxyDiscovery =
+  | { kind: 'found'; endpoint: ProxyEndpoint }
+  | { kind: 'unreachable' }
+  | { kind: 'none' }
 
 export type ProxyDetectDeps = {
   /** 环境变量来源，默认 process.env */
@@ -145,17 +159,21 @@ function probeTcpPort(port: number, timeoutMs = 500): Promise<boolean> {
   })
 }
 
-/** 返回推导出的代理端点；推导失败返回 null */
+/** 推导代理端点，并区分「没有配置」「配置了但连不上」「找到」 */
 export async function detectProxy(
   cfg: Config['probe']['proxy'],
   deps: ProxyDetectDeps = {},
-): Promise<ProxyEndpoint | null> {
+): Promise<ProxyDiscovery> {
   const env = deps.env ?? process.env
   const readRegistry = deps.readRegistryProxy ?? readWindowsRegistryProxy
   const probe = deps.probeTcp ?? probeTcpPort
 
   const candidates: ProxyEndpoint[] = []
-  if (cfg.mode === 'auto') {
+  if (cfg.mode === 'manual') {
+    for (const port of cfg.ports) {
+      candidates.push({ protocol: 'http', host: '127.0.0.1', port })
+    }
+  } else {
     for (const key of ENV_KEYS) {
       const raw = env[key]
       if (raw) candidates.push(...parseProxyValue(raw))
@@ -163,16 +181,15 @@ export async function detectProxy(
     const registry = readRegistry()
     if (registry) candidates.push(...parseProxyValue(registry))
   }
-  for (const port of cfg.ports) {
-    candidates.push({ protocol: 'http', host: '127.0.0.1', port })
-  }
+
+  if (candidates.length === 0) return { kind: 'none' }
 
   const seen = new Set<string>()
   for (const endpoint of candidates) {
     const key = `${endpoint.host}:${endpoint.port}`
     if (seen.has(key)) continue
     seen.add(key)
-    if (await probe(endpoint.port)) return endpoint
+    if (await probe(endpoint.port)) return { kind: 'found', endpoint }
   }
-  return null
+  return { kind: 'unreachable' }
 }

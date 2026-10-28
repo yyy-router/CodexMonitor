@@ -3,11 +3,14 @@
  *
  * 每轮并行打三层：
  *   L1  TCP connect 代理端口
- *   L2  经代理 GET https://chatgpt.com/（浏览器 UA）
- *   L3  直连 https://registry.npmmirror.com/
+ *   L2  经代理 GET Codex 真实端点（默认 api.openai.com/v1/responses）
+ *   L3  直连 registry.npmmirror.com（辅助信息，不参与代理模式判定）
  *
- * 判定规则：HTTP 000（超时/DNS 失败/拒连）= 不通，其他任何状态码 = 通。
- * deriveVerdict 是纯函数（真值表），probeOnce 是 IO。
+ * 判定规则：
+ *   - status 0（超时/DNS 失败/拒连）= 不通
+ *   - 403（Cloudflare 拦截）= 不通；5xx（网关故障）= 不通
+ *   - 其余状态码（200 / 401 / 405 / 429 …）= 通
+ * deriveVerdict 是纯函数，probeOnce 是 IO。
  *
  * 实现上只用 node:net / node:tls 手搓 HTTP/1.1，不引第三方代理库：
  *   - HTTP(S) 代理：https 目标走 CONNECT 隧道；http 目标走 absolute-form（不建隧道，
@@ -21,7 +24,7 @@ import { connect as netConnect, isIP, type Socket } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import type { ProbeVerdict } from '../events.js'
 import type { Config } from '../config.js'
-import type { ProxyEndpoint } from './proxy-detect.js'
+import type { ProxyDiscovery, ProxyEndpoint } from './proxy-detect.js'
 
 export type LayerResult = {
   ok: boolean
@@ -30,9 +33,14 @@ export type LayerResult = {
   latencyMs: number | null
 }
 
+export type ProbeMode = 'proxy' | 'direct'
+
 export type ProbeResult = {
+  /** proxy：经代理探测；direct：未配置代理，按 Codex 的直连行为探测 */
+  mode: ProbeMode
   l1: LayerResult
   l2: LayerResult
+  /** 直连辅助信息：只作诊断参考，不参与代理模式下的故障归因 */
   l3: LayerResult
   verdict: ProbeVerdict
 }
@@ -54,15 +62,26 @@ const proxyAuthHeader = (proxy: ProxyEndpoint | null): string | undefined => {
   return `Basic ${Buffer.from(raw, 'utf8').toString('base64')}`
 }
 
-/** 由 L1/L2/L3 结果推判定（纯函数，真值表见 §4.2） */
+/**
+ * 由探测结果推判定（纯函数）。
+ *
+ * 代理模式只看 L1 + L2：
+ *   - L1 失败 → 代理程序未运行
+ *   - L2 失败 → 代理节点故障（即使直连也不通；TUN/全局模式下「直连」同样走隧道，
+ *     节点挂了 L3 必然失败，据此判 netDown 只会误导）
+ * 直连模式（未配置代理）由 L2 直接探测目标，失败即整体不可用。
+ */
 export function deriveVerdict(
   r: Omit<ProbeResult, 'verdict'>,
   slowThresholdMs: number,
 ): ProbeVerdict {
-  // 代理程序不在：无论能否直连外网，Codex 都出不去
-  if (!r.l1.ok) return 'proxyNotRunning'
-  if (!r.l2.ok) return r.l3.ok ? 'proxyDown' : 'netDown'
   const slow = r.l2.latencyMs != null && r.l2.latencyMs > slowThresholdMs
+  if (r.mode === 'direct') {
+    if (!r.l2.ok) return 'netDown'
+    return slow ? 'slow' : 'ok'
+  }
+  if (!r.l1.ok) return 'proxyNotRunning'
+  if (!r.l2.ok) return 'proxyDown'
   return slow ? 'slow' : 'ok'
 }
 
@@ -396,10 +415,12 @@ async function probeHttp(
       requestStatus(socket, url, requestTarget, viaHttpProxy ? proxyAuthHeader(proxy) : undefined, ua, remaining()),
       remaining(),
     )
-    // absolute-form 下 407 / 5xx 由代理生成（认证失败、上游不可达），请求并没有到目标；
-    // 不能按「任何状态码都算通」处理
-    const proxyRejected = absoluteForm && (status === 407 || status >= 500)
-    return { ok: status > 0 && !proxyRejected, status, latencyMs: Date.now() - startedAt }
+    // absolute-form 下 407 由代理生成（认证失败），请求并没有到目标
+    const proxyRejected = absoluteForm && status === 407
+    // 403 = 被 Cloudflare 拦截（节点 IP 被封，Codex 同样会被拦）；5xx = 网关故障。
+    // 两者都不算「通」——只认 2xx / 其他 4xx（如 401 未认证）
+    const ok = status > 0 && status !== 403 && status < 500 && !proxyRejected
+    return { ok, status, latencyMs: Date.now() - startedAt }
   } catch {
     return { ok: false, status: 0, latencyMs: null }
   } finally {
@@ -419,20 +440,38 @@ async function probeTcp(proxy: ProxyEndpoint, timeoutMs: number): Promise<LayerR
   }
 }
 
-/** 跑一轮三层探测（IO）；三层并行，任一失败不影响其余 */
+/** 跑一轮探测（IO）；三层并行，任一失败不影响其余 */
 export async function probeOnce(
-  proxy: ProxyEndpoint | null,
+  discovery: ProxyDiscovery,
   cfg: Config['probe'],
   deps: ProbeDeps = {},
 ): Promise<ProbeResult> {
-  const missed: LayerResult = { ok: false, status: 0, latencyMs: null }
+  // 配了代理却连不上：不做无意义的 L2/L3 请求，直接判「代理程序未运行」
+  if (discovery.kind === 'unreachable') {
+    const unavailable: LayerResult = { ok: false, status: null, latencyMs: null }
+    return {
+      mode: 'proxy',
+      l1: unavailable,
+      l2: { ok: false, status: 0, latencyMs: null },
+      l3: unavailable,
+      verdict: 'proxyNotRunning',
+    }
+  }
+
+  const endpoint: ProxyEndpoint | null = discovery.kind === 'found' ? discovery.endpoint : null
+  const mode: ProbeMode = endpoint ? 'proxy' : 'direct'
+  const notApplicable: LayerResult = { ok: false, status: null, latencyMs: null }
   const [l1, l2, l3] = await Promise.all([
-    proxy ? probeTcp(proxy, cfg.timeoutMs) : Promise.resolve({ ...missed, status: null }),
-    // 没有代理端点时 L2 无从谈起，直接判失败（不可退化成直连）
-    proxy
-      ? probeHttp(cfg.targets.l2, proxy, cfg.userAgent, cfg.timeoutMs, deps)
-      : Promise.resolve(missed),
+    endpoint ? probeTcp(endpoint, cfg.timeoutMs) : Promise.resolve(notApplicable),
+    // 没有代理配置时，Codex 也走直连 —— L2 直接探测目标
+    probeHttp(cfg.targets.l2, endpoint, cfg.userAgent, cfg.timeoutMs, deps),
     probeHttp(cfg.targets.l3, null, cfg.userAgent, cfg.timeoutMs, deps),
   ])
-  return { l1, l2, l3, verdict: deriveVerdict({ l1, l2, l3 }, cfg.slowThresholdMs) }
+  return {
+    mode,
+    l1,
+    l2,
+    l3,
+    verdict: deriveVerdict({ mode, l1, l2, l3 }, cfg.slowThresholdMs),
+  }
 }

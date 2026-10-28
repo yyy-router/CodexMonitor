@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { deriveVerdict, probeOnce, type LayerResult } from '../../src/probe/targets.js'
-import type { ProxyEndpoint } from '../../src/probe/proxy-detect.js'
+import type { ProxyDiscovery, ProxyEndpoint } from '../../src/probe/proxy-detect.js'
 import { DEFAULT_CONFIG, type Config } from '../../src/config.js'
 
 /**
@@ -55,49 +55,60 @@ const layer = (ok: boolean, latencyMs: number | null = 10): LayerResult => ({
   latencyMs: ok ? latencyMs : null,
 })
 
-const verdict = (l1: LayerResult, l2: LayerResult, l3: LayerResult, slow = 3000) =>
-  deriveVerdict({ l1, l2, l3 }, slow)
+const proxyVerdict = (l1: LayerResult, l2: LayerResult, l3: LayerResult, slow = 3000) =>
+  deriveVerdict({ mode: 'proxy', l1, l2, l3 }, slow)
+
+const directVerdict = (l2: LayerResult, l3: LayerResult = layer(true), slow = 3000) =>
+  deriveVerdict({ mode: 'direct', l1: layer(false), l2, l3 }, slow)
 
 describe('deriveVerdict（真值表）', () => {
-  it('三层皆通且不慢 → ok', () => {
-    expect(verdict(layer(true), layer(true), layer(true))).toBe('ok')
+  it('代理模式：三层皆通且不慢 → ok', () => {
+    expect(proxyVerdict(layer(true), layer(true), layer(true))).toBe('ok')
   })
 
-  it('L2 耗时超过 slowThresholdMs → slow', () => {
-    expect(verdict(layer(true), layer(true, 3001), layer(true), 3000)).toBe('slow')
+  it('代理模式：L2 耗时超过 slowThresholdMs → slow', () => {
+    expect(proxyVerdict(layer(true), layer(true, 3001), layer(true), 3000)).toBe('slow')
   })
 
-  it('L2 耗时等于阈值 → 仍为 ok', () => {
-    expect(verdict(layer(true), layer(true, 3000), layer(true), 3000)).toBe('ok')
+  it('代理模式：L2 耗时等于阈值 → 仍为 ok', () => {
+    expect(proxyVerdict(layer(true), layer(true, 3000), layer(true), 3000)).toBe('ok')
   })
 
-  it('L2 通但耗时未知 → ok', () => {
-    expect(verdict(layer(true), layer(true, null), layer(true))).toBe('ok')
+  it('代理模式：L2 通但耗时未知 → ok', () => {
+    expect(proxyVerdict(layer(true), layer(true, null), layer(true))).toBe('ok')
   })
 
-  it('L1✓ L2✗ L3✓ → proxyDown', () => {
-    expect(verdict(layer(true), layer(false), layer(true))).toBe('proxyDown')
+  it('代理模式：L1 失败 → proxyNotRunning（不看 L3）', () => {
+    expect(proxyVerdict(layer(false), layer(false), layer(true))).toBe('proxyNotRunning')
   })
 
-  it('L1✓ L2✗ L3✗ → netDown', () => {
-    expect(verdict(layer(true), layer(false), layer(false))).toBe('netDown')
+  it('代理模式：L1 ok、L2 失败 → proxyDown', () => {
+    expect(proxyVerdict(layer(true), layer(false), layer(true))).toBe('proxyDown')
   })
 
-  it('L1✗ L3✗ → proxyNotRunning', () => {
-    expect(verdict(layer(false), layer(false), layer(false))).toBe('proxyNotRunning')
+  it('代理模式：L1 ok、L2 失败、L3 也失败 → 仍是 proxyDown', () => {
+    // TUN / 全局模式下「直连」也走隧道，节点挂了 L3 必然失败，不能据此判 netDown
+    expect(proxyVerdict(layer(true), layer(false), layer(false))).toBe('proxyDown')
   })
 
-  it('L1✗ 但 L3✓ → 仍是 proxyNotRunning（代理进程不在，Codex 出不去）', () => {
-    expect(verdict(layer(false), layer(false), layer(true))).toBe('proxyNotRunning')
+  it('代理模式：L1 ok、L2 ok、L3 失败 → ok（L3 只是辅助信息）', () => {
+    expect(proxyVerdict(layer(true), layer(true), layer(false))).toBe('ok')
   })
 
-  it('L1✓ L2✓ L3✗ → ok（关键路径通即可）', () => {
-    expect(verdict(layer(true), layer(true), layer(false))).toBe('ok')
+  it('直连模式：L2 通 → ok', () => {
+    expect(directVerdict(layer(true))).toBe('ok')
   })
 
-  it('非 200 状态码也算通（401/403/421 等）', () => {
-    const r: LayerResult = { ok: true, status: 401, latencyMs: 5 }
-    expect(verdict(r, r, r)).toBe('ok')
+  it('直连模式：L2 慢 → slow', () => {
+    expect(directVerdict(layer(true, 3001), layer(true), 3000)).toBe('slow')
+  })
+
+  it('直连模式：L2 失败 → netDown', () => {
+    expect(directVerdict(layer(false))).toBe('netDown')
+  })
+
+  it('直连模式：忽略 L1', () => {
+    expect(directVerdict(layer(true), layer(false))).toBe('ok')
   })
 })
 
@@ -141,6 +152,13 @@ const target = (delayMs = 0): Server =>
       res.writeHead(200)
       res.end('ok')
     }, delayMs)
+  })
+
+/** 返回指定状态码的目标服务器（用于 403 / 401 / 5xx 语义用例） */
+const statusTarget = (status: number): Server =>
+  createServer((_req, res) => {
+    res.writeHead(status)
+    res.end('x')
   })
 
 /** 返回 200 的 HTTPS 目标服务器（运行时生成的自签证书） */
@@ -305,12 +323,15 @@ const closedPort = async (): Promise<number> => {
   return port
 }
 
-const httpEndpoint = (port: number, over: Partial<ProxyEndpoint> = {}): ProxyEndpoint => ({
-  protocol: 'http',
-  host: '127.0.0.1',
-  port,
-  ...over,
+const httpEndpoint = (
+  port: number,
+  over: Partial<ProxyEndpoint> = {},
+): ProxyDiscovery => ({
+  kind: 'found',
+  endpoint: { protocol: 'http', host: '127.0.0.1', port, ...over },
 })
+
+const NO_PROXY: ProxyDiscovery = { kind: 'none' }
 
 const probeCfg = (l2: string, l3: string, over: Partial<Config['probe']> = {}): Config['probe'] => ({
   ...DEFAULT_CONFIG.probe,
@@ -355,14 +376,51 @@ describe('probeOnce（本地服务器集成）', () => {
     expect(r.verdict).toBe('proxyDown')
   })
 
-  it('L2、L3 均不可连 → netDown', async () => {
+  it('L2 不可连、L3 也失败 → 仍是 proxyDown（不再判 netDown）', async () => {
     const dead = await closedPort()
     const proxyPort = await listen(httpProxy().server)
     const r = await probeOnce(
       httpEndpoint(proxyPort),
       probeCfg(`http://127.0.0.1:${dead}/`, `http://127.0.0.1:${dead}/`),
     )
-    expect(r.verdict).toBe('netDown')
+    expect(r.verdict).toBe('proxyDown')
+  })
+
+  it('L2 返回 403（被拦截）→ 不健康 → proxyDown', async () => {
+    const blockedPort = await listen(statusTarget(403))
+    const live = await listen(target())
+    const proxyPort = await listen(httpProxy().server)
+    const r = await probeOnce(
+      httpEndpoint(proxyPort),
+      probeCfg(`http://127.0.0.1:${blockedPort}/`, `http://127.0.0.1:${live}/`),
+    )
+    expect(r.l2.status).toBe(403)
+    expect(r.l2.ok).toBe(false)
+    expect(r.verdict).toBe('proxyDown')
+  })
+
+  it('L2 返回 401（未认证但可达）→ 健康', async () => {
+    const authPort = await listen(statusTarget(401))
+    const live = await listen(target())
+    const proxyPort = await listen(httpProxy().server)
+    const r = await probeOnce(
+      httpEndpoint(proxyPort),
+      probeCfg(`http://127.0.0.1:${authPort}/`, `http://127.0.0.1:${live}/`),
+    )
+    expect(r.l2.ok).toBe(true)
+    expect(r.verdict).toBe('ok')
+  })
+
+  it('L2 返回 5xx（网关故障）→ 不健康', async () => {
+    const gwPort = await listen(statusTarget(502))
+    const live = await listen(target())
+    const proxyPort = await listen(httpProxy().server)
+    const r = await probeOnce(
+      httpEndpoint(proxyPort),
+      probeCfg(`http://127.0.0.1:${gwPort}/`, `http://127.0.0.1:${live}/`),
+    )
+    expect(r.l2.ok).toBe(false)
+    expect(r.verdict).toBe('proxyDown')
   })
 
   it('L1 端口无监听、L3 不可连 → proxyNotRunning', async () => {
@@ -375,13 +433,34 @@ describe('probeOnce（本地服务器集成）', () => {
     expect(r.verdict).toBe('proxyNotRunning')
   })
 
-  it('无代理端点（null）→ L1/L2 失败、L3 照常直连', async () => {
+  it('无代理配置 → 直连模式：目标可达 → ok', async () => {
     const live = await listen(target())
     const url = `http://127.0.0.1:${live}/`
-    const r = await probeOnce(null, probeCfg(url, url))
-    expect(r.l1.ok).toBe(false)
+    const r = await probeOnce(NO_PROXY, probeCfg(url, url))
+    expect(r.mode).toBe('direct')
+    expect(r.l1.ok).toBe(false) // 无代理，L1 不适用
+    expect(r.l2.ok).toBe(true) // L2 直接探测目标
+    expect(r.verdict).toBe('ok')
+  })
+
+  it('无代理配置且目标不可达 → netDown', async () => {
+    const dead = await closedPort()
+    const r = await probeOnce(
+      NO_PROXY,
+      probeCfg(`http://127.0.0.1:${dead}/`, 'http://127.0.0.1:1/'),
+    )
+    expect(r.mode).toBe('direct')
     expect(r.l2.ok).toBe(false)
-    expect(r.l3.ok).toBe(true)
+    expect(r.verdict).toBe('netDown')
+  })
+
+  it('配置了代理但连不上 → proxyNotRunning', async () => {
+    const r = await probeOnce(
+      { kind: 'unreachable' },
+      probeCfg('http://127.0.0.1:1/', 'http://127.0.0.1:1/'),
+    )
+    expect(r.mode).toBe('proxy')
+    expect(r.l1.ok).toBe(false)
     expect(r.verdict).toBe('proxyNotRunning')
   })
 
@@ -451,7 +530,7 @@ describe('probeOnce（本地服务器集成）', () => {
   it.skipIf(tls === null)('HTTPS 直连（自签 CA）→ 通过', async () => {
     const targetPort = await listen(httpsTarget())
     const url = `https://localhost:${targetPort}/`
-    const r = await probeOnce(null, probeCfg(url, url), { ca: tls!.cert })
+    const r = await probeOnce(NO_PROXY, probeCfg(url, url), { ca: tls!.cert })
     expect(r.l3.ok).toBe(true)
     expect(r.l3.status).toBe(200)
   })
@@ -470,7 +549,7 @@ describe('probeOnce（本地服务器集成）', () => {
     const targetPort = await listen(hanging())
     const url = `https://localhost:${targetPort}/`
     const t0 = Date.now()
-    const r = await probeOnce(null, probeCfg(url, url, { timeoutMs: 150 }), { ca: tls!.cert })
+    const r = await probeOnce(NO_PROXY, probeCfg(url, url, { timeoutMs: 150 }), { ca: tls!.cert })
     expect(Date.now() - t0).toBeLessThan(2000)
     expect(r.l3.ok).toBe(false)
   })

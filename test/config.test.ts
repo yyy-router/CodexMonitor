@@ -101,6 +101,11 @@ describe('mergeConfig', () => {
     ).toThrow(/email/)
   })
 
+  it("channel='console'（本地验证）无需凭证即通过", () => {
+    const r = mergeConfig({ notify: { channel: 'console' } })
+    expect(r.notify.channel).toBe('console')
+  })
+
   it("channel='ilink'（默认）无需凭证即通过", () => {
     const r = mergeConfig({ ilink: { userId: 'u1' } })
     expect(r.ilink.userId).toBe('u1')
