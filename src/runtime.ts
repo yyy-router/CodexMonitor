@@ -23,6 +23,25 @@ import type { ProbeResult } from './probe/targets.js'
 /** 额度快照在 StateStore 里的键 */
 export const QUOTA_STATE_KEY = 'quota'
 
+/** 发件箱（投递失败待重试）在 StateStore 里的键 */
+export const PENDING_STATE_KEY = 'pending'
+
+/** 单条通知的最大投递次数（含首次），超过即放弃，避免队列无限增长 */
+export const MAX_DELIVERY_ATTEMPTS = 6
+
+/** 退避基数：5s → 10s → 20s → 40s → 80s */
+const RETRY_BASE_MS = 5_000
+const retryDelayMs = (attempts: number): number => RETRY_BASE_MS * 2 ** (attempts - 1)
+
+/** 投递失败、等待重试的通知（已按分片拆好） */
+type PendingNote = {
+  note: Notification
+  /** 已失败次数 */
+  attempts: number
+  /** 下次可重试的时刻，unix 毫秒 */
+  nextAttemptAt: number
+}
+
 /** 网络恢复通知文案 */
 export const RECOVERY_TEXT = '✅ 网络已恢复正常'
 
@@ -73,6 +92,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   })
 
   let lastSnapshot = ''
+  let pending: PendingNote[] = []
+  let lastPending = ''
 
   /** 只在内容变化时落盘，避免每秒 tick 都写文件 */
   const persistQuota = (): void => {
@@ -87,35 +108,73 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     }
   }
 
+  const persistPending = (): void => {
+    const json = JSON.stringify(pending)
+    if (json === lastPending) return
+    try {
+      stateStore.save(PENDING_STATE_KEY, pending)
+      lastPending = json
+    } catch (e) {
+      log(`发件箱保存失败：${errText(e)}`)
+    }
+  }
+
+  /** 长消息拆片；每片占 1 条配额，id 必须唯一（飞书 uuid 幂等键会去重相同 id） */
+  const expand = (note: Notification): Notification[] => {
+    const chunks = splitLongMessage(note.text)
+    if (chunks.length === 0) return []
+    if (chunks.length === 1) return [{ ...note, text: chunks[0]! }]
+    return chunks.map((text, i) => ({ ...note, id: `${note.id}#${i + 1}`, text }))
+  }
+
+  /**
+   * 投递：先把到期的发件箱重试掉，再发新通知。
+   * 失败的通知按原 id 入队（飞书 uuid 幂等，重发不会重复送达），
+   * 指数退避重试，超过 MAX_DELIVERY_ATTEMPTS 次后放弃。
+   */
   const deliver = async (notes: Notification[]): Promise<void> => {
-    for (const note of notes) {
-      const chunks = splitLongMessage(note.text)
-      for (let i = 0; i < chunks.length; i++) {
-        const text = chunks[i]!
-        // 每片占 1 条配额，id 必须唯一（飞书 uuid 幂等键会去重相同 id）
-        const part: Notification =
-          chunks.length === 1 ? { ...note, text } : { ...note, id: `${note.id}#${i + 1}`, text }
+    const at = now()
+    const due = pending.filter((p) => p.nextAttemptAt <= at)
+    pending = pending.filter((p) => p.nextAttemptAt > at)
 
-        let result: DeliveryResult
-        try {
-          result = await notifier.send(part)
-        } catch (e) {
-          result = { ok: false, reason: errText(e) }
+    const batch: PendingNote[] = [
+      ...due,
+      ...notes.flatMap(expand).map((note) => ({ note, attempts: 0, nextAttemptAt: 0 })),
+    ]
+
+    for (const item of batch) {
+      let result: DeliveryResult
+      try {
+        result = await notifier.send(item.note)
+      } catch (e) {
+        result = { ok: false, reason: errText(e) }
+      }
+
+      policy.onDelivery(result)
+      deliveryLog.record({
+        ts: now(),
+        severity: item.note.severity,
+        source: item.note.source,
+        text: item.note.text,
+        ok: result.ok,
+        reason: result.reason,
+        errcode: result.errcode,
+        messageId: result.messageId,
+      })
+
+      if (!result.ok) {
+        const attempts = item.attempts + 1
+        if (attempts < MAX_DELIVERY_ATTEMPTS) {
+          pending.push({ note: item.note, attempts, nextAttemptAt: now() + retryDelayMs(attempts) })
+        } else {
+          log(
+            `投递失败已达上限，放弃：${item.note.id}（${result.reason ?? result.errcode ?? 'unknown'}）`,
+          )
         }
-
-        policy.onDelivery(result)
-        deliveryLog.record({
-          ts: now(),
-          severity: part.severity,
-          source: part.source,
-          text,
-          ok: result.ok,
-          reason: result.reason,
-          errcode: result.errcode,
-          messageId: result.messageId,
-        })
       }
     }
+
+    persistPending()
   }
 
   return {
@@ -123,11 +182,27 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       const saved = stateStore.load<QuotaSnapshot>(QUOTA_STATE_KEY)
       if (saved) quota.restore(saved)
       lastSnapshot = JSON.stringify(quota.snapshot())
+
+      // 上次进程遗留的未送达通知：重启后继续重试
+      const savedPending = stateStore.load<PendingNote[]>(PENDING_STATE_KEY)
+      pending = Array.isArray(savedPending)
+        ? savedPending.filter(
+            (p): p is PendingNote =>
+              typeof p === 'object' &&
+              p !== null &&
+              typeof p.note?.id === 'string' &&
+              typeof p.attempts === 'number' &&
+              typeof p.nextAttemptAt === 'number',
+          )
+        : []
+      lastPending = JSON.stringify(pending)
+
       await notifier.start()
     },
 
     async stop() {
       persistQuota()
+      persistPending()
       await notifier.stop()
     },
 

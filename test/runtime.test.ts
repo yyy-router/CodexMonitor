@@ -222,6 +222,87 @@ describe('createRuntime', () => {
     expect(notifier.sent[1]!.source).toBe('probeRecovered')
   })
 
+  it('投递失败的通知入队，退避到期后重试并成功', async () => {
+    let calls = 0
+    const notifier: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async () => {
+        calls++
+        return calls === 1 ? { ok: false, reason: 'network' } : { ok: true }
+      },
+    }
+    let clock = 1_000_000
+    const { rt, stateStore } = makeRuntime({ notifier, now: () => clock })
+
+    await rt.deliver([note({ id: 'n1' })])
+    expect(calls).toBe(1)
+    expect(stateStore.load<unknown[]>('pending')).toHaveLength(1)
+
+    clock += 4_999
+    await rt.tick()
+    expect(calls).toBe(1) // 退避未到期，不重试
+
+    clock += 1
+    await rt.tick()
+    expect(calls).toBe(2)
+    expect(stateStore.load<unknown[]>('pending')).toEqual([])
+  })
+
+  it('发件箱落盘，新进程启动后继续重试', async () => {
+    const dir = makeDir()
+    const stateStore = createStateStore(dir)
+    const deliveryLog = createDeliveryLog(dir)
+
+    const failing: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async () => ({ ok: false, reason: 'down' }),
+    }
+    const first = makeRuntime({ notifier: failing, stateStore, deliveryLog, now: () => 1000 })
+    await first.rt.deliver([note({ id: 'carry-me' })])
+    expect(stateStore.load<unknown[]>('pending')).toHaveLength(1)
+
+    const sent: Notification[] = []
+    const working: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async (n) => {
+        sent.push(n)
+        return { ok: true }
+      },
+    }
+    const second = makeRuntime({ notifier: working, stateStore, deliveryLog, now: () => 1_000_000 })
+    await second.rt.start()
+    await second.rt.tick()
+
+    expect(sent.map((n) => n.id)).toEqual(['carry-me'])
+    expect(stateStore.load<unknown[]>('pending')).toEqual([])
+  })
+
+  it('超过最大尝试次数后放弃，队列不无限增长', async () => {
+    let calls = 0
+    const failing: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async () => {
+        calls++
+        return { ok: false, reason: 'down' }
+      },
+    }
+    let clock = 0
+    const { rt, stateStore } = makeRuntime({ notifier: failing, now: () => clock })
+
+    await rt.deliver([note()])
+    for (let i = 0; i < 10; i++) {
+      clock += 600_000
+      await rt.tick()
+    }
+
+    expect(calls).toBe(6) // 首次 + 5 次重试
+    expect(stateStore.load<unknown[]>('pending')).toEqual([])
+  })
+
   it('start：恢复额度快照；stop：启停 notifier', async () => {
     const { rt, notifier, stateStore } = makeRuntime()
     stateStore.save('quota', {

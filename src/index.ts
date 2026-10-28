@@ -139,12 +139,23 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
   let ticking = false
   let tickTimer: NodeJS.Timeout | undefined
   let probeTimer: NodeJS.Timeout | undefined
+  const inFlight = new Set<Promise<void>>()
+
+  const track = (task: Promise<void>): void => {
+    inFlight.add(task)
+    const done = (): void => {
+      inFlight.delete(task)
+    }
+    task.then(done, done)
+  }
 
   const stop = async (): Promise<void> => {
     if (stopped) return
     stopped = true
     if (tickTimer) clearInterval(tickTimer)
     if (probeTimer) clearTimeout(probeTimer)
+    // 等本轮 tick / 探针跑完，避免「已停止」之后还有消息发出、状态还在写
+    await Promise.allSettled([...inFlight])
     try {
       await runtime.stop()
     } catch (e) {
@@ -154,7 +165,13 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
     log('已停止')
   }
 
-  await runtime.start()
+  try {
+    await runtime.start()
+  } catch (e) {
+    // 启动失败也要移除信号监听，否则宿主进程会残留指向废弃 controller 的 handler
+    dispose()
+    throw e
+  }
 
   // 启动过程中就可能已收到停止信号（例如通道启动失败后主动退出）
   if (signal.aborted) {
@@ -163,23 +180,20 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
   }
 
   const onTick = async (): Promise<void> => {
-    if (stopped || ticking) return
-    ticking = true
     try {
       const events = await tailer.tick()
       if (events.length > 0) await runtime.ingest(events)
       await runtime.tick()
     } catch (e) {
       log(`tick 失败：${errText(e)}`)
-    } finally {
-      ticking = false
     }
   }
 
   const scheduleProbe = (delayMs: number): void => {
     if (stopped) return
     probeTimer = setTimeout(() => {
-      void onProbe()
+      if (stopped) return
+      track(onProbe())
     }, delayMs)
   }
 
@@ -199,7 +213,12 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
   }
 
   tickTimer = setInterval(() => {
-    void onTick()
+    if (stopped || ticking) return
+    ticking = true
+    const task = onTick().finally(() => {
+      ticking = false
+    })
+    track(task)
   }, deps.tickIntervalMs ?? TICK_INTERVAL_MS)
 
   if (cfg.probe.enabled) scheduleProbe(cfg.probe.intervalMs)
