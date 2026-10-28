@@ -1,94 +1,142 @@
 # CodexMonitor
 
-监控本地 Codex 的运行状态，通过微信 / 飞书推送通知。
+**在 VSCode 里用 Codex 跑任务时，不用一直盯着屏幕。**
 
-在 VSCode 里用 Codex 跑任务时，你不用一直盯着屏幕。CodexMonitor 常驻后台，把这些情况推到你的微信或飞书：
+后台常驻，监控本地 Codex 的运行状态，通过飞书（或本地控制台）把任务完成、额度告警、网络故障推给你。
 
-| | 场景 |
-|---|---|
-| ✅ | **任务完成** —— 哪个项目、耗时多久、结论是什么 |
-| 📶 | **网络异常** —— 代理挂了 / 整体断网 |
-| 📊 | **额度信息** —— 5 小时 / 7 天窗口的用量、耗尽、重置 |
+[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)](#开发)
+[![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](#技术选型)
+[![License](https://img.shields.io/badge/license-ISC-blue)](#许可)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#)
+
+---
+
+## 功能
+
+| | 场景 | 级别 |
+|---|---|---|
+| ✅ | **任务完成** —— 按项目聚合，带摘要（受 `aggregate` 节流） | `info` |
+| 🚨 | **任务被中断** —— 立即推送 | `alert` |
+| 📊 | **额度告警** —— 80%（默认关）/ 95% / 耗尽 100% | `warn` / `critical` / `alert` |
+| 🔄 | **额度重置** —— 5 小时 / 7 天窗口 | `info` |
+| 📶 | **网络异常** —— 代理未运行 / 代理节点故障 / 整体断网 | `alert` |
+| ✅ | **网络恢复** —— 连续 2 次探测正常 | `info` |
 
 ## 当前状态
 
-**可行性验证完成，主体功能尚未实现。**
+- ✅ **可运行**：`npm start` 启动常驻进程
+- ✅ **推送通道**：飞书企业自建应用、控制台；**iLink 暂不实现**（`channel: "ilink"` 会明确报错）
+- ✅ **零运行时依赖**：只用 `node:*` 内置模块，依赖全部在 devDependencies
+- ✅ **投递可靠**：失败自动进入发件箱，指数退避重试并跨重启恢复
+- ⚠️ **不回放历史**：从进程启动时刻开始 tail 会话日志，启动前的旧事件不会补推
 
-已验证的关键问题：
+## 快速开始
 
-- [x] **微信 iLink 的实际推送配额** —— 每次用户激活 10 条主动推送，自动回执也计入；耗尽返回 HTTP 200 + `errcode: -2`。详见 [AGENTS.md](AGENTS.md)
-- [x] **主动推送的可靠性** —— 实测无静默丢弃（接口成功数 = 手机实收数）
-- [x] **飞书自建应用推送** —— 2026-10-19 探针实测 5 项全过，结论见下
-- [x] Codex 状态可观测性 —— `~/.codex/sessions/**/*.jsonl` 已确认可用
-- [x] 网络探针设计 —— 已实测踩清代理端口漂移、DNS 污染、403 假故障等坑
+需要 Node.js ≥ 22。
 
-飞书探针结论（2026-10-19）：
-
-- **私聊无需先互动** —— 同租户自建应用可直接调 `im/v1/messages` 发私聊
-- **token 时间门控** —— `tenant_access_token` 有效期 2 小时，剩余 ≥30 分钟复用，与用户是否回消息无关
-- **open_id 可直接解析** —— 用手机号 / 邮箱调 `contact/v3/users/batch_get_id`，无需事件订阅
-- **单聊限流约 5 QPS** —— 超限返回 `230020`，需退避重试
-- **无「10 条额度」模型** —— 不需要 iLink 式的配额守卫，投递靠上游聚合节流
-
-## 技术选型
-
-| 部分 | 选型 | 说明 |
-|---|---|---|
-| 语言 | TypeScript + Node.js ≥ 22 | |
-| 观测 | 只读 `~/.codex/sessions/**/rollout-*.jsonl` | 不侵入 Codex 进程，不改任何配置 |
-| 推送 | 微信 iLink / 飞书企业自建应用 | 微信经 [`@wechatbot/wechatbot`](https://www.npmjs.com/package/@wechatbot/wechatbot) 接入；飞书走官方 Open API，无额外 SDK |
-
-## 工作原理
-
-```
-Watcher (只读 JSONL) ─┐
-                      ├─▶ PolicyEngine (纯函数) ─▶ Notifier ─▶ 微信 / 飞书
-NetProbe (独立定时)   ─┘
+```bash
+npm install
+cp codexmonitor.config.example.json codexmonitor.config.json
+# 编辑 codexmonitor.config.json：先设 "channel": "console" 本地验证
+npm start
 ```
 
-- **Watcher** 增量 tail Codex 的会话日志，解析出完成 / 中断 / 额度事件
-- **NetProbe** 独立探测代理与 OpenAI 连通性，与 Codex 解耦
-- **PolicyEngine** 负责分级、聚合、节流、配额守卫，全部是纯函数，可完整单测
-- **Notifier** 走通道中性的接口，飞书实现已完成，iLink 待实现，由 `notify.channel` 切换
+启动后会看到：
 
-## 推送通道
+```
+[codexmonitor] 已启动（通道：console）
+```
 
-单一配置文件 `codexmonitor.config.json`，通道专属字段以段名为前缀，用 `notify.channel` 切换：
+用 Codex 跑任务：**中断会立即推送**；**任务完成按 `aggregate` 节流聚合**（默认最多 2 小时一条）。想先验证链路，中断一个任务最快。
 
-| 通道 | 配置段 | 说明 |
-|---|---|---|
-| `ilink`（默认） | `ilink.*` | 微信 iLink；登录凭证存 `~/.wechatbot`，不入库 |
-| `feishu` | `feishu.*` | 飞书企业自建应用；需 `feishu.appId` / `feishu.appSecret`，以及用于解析 open_id 的 `feishu.email` 或 `feishu.mobile`（邮箱优先） |
+### 切换到飞书
+
+1. 在飞书开放平台创建**企业自建应用**，开通机器人能力
+2. 把 `notify.channel` 改为 `"feishu"`
+3. 填写 `feishu.appId`、`feishu.appSecret`，以及用于解析 open_id 的 `feishu.email` 或 `feishu.mobile`（邮箱优先）
 
 ```json
 {
   "notify": { "channel": "feishu" },
   "feishu": {
-    "appId": "cli_xxx",
-    "appSecret": "...",
+    "appId": "cli_xxxxxxxx",
+    "appSecret": "xxxxxxxx",
     "email": "you@corp.com",
     "mobile": ""
   }
 }
 ```
 
-> 配置加载（`loadConfig`）与组装（`main()`）尚为 stub：配置结构与飞书通道实现已就绪，接线留待后续 issue。
+> `codexmonitor.config.json` 含密钥，已被 `.gitignore` 忽略，**不要提交**。
+
+## 配置
+
+配置文件为单一 JSON，深合并到默认值；只需写要覆盖的字段。
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `notify.channel` | `"ilink"` | `feishu` / `console`；默认值 `ilink` 未实现，**必须显式设置** |
+| `codex.sessionsDir` | `~/.codex/sessions` | Codex 会话日志根目录 |
+| `codex.maxTrackedFiles` | `20` | 同时跟踪的最新会话文件数 |
+| `notify.aggregate.minIntervalMs` | `7200000` | 完成通知的最小间隔（2h） |
+| `notify.aggregate.maxItems` | `5` | 单条聚合消息最多包含的任务数 |
+| `notify.aggregate.maxPerDay` | `4` | 完成通知每日上限 |
+| `notify.thresholds.warnEnabled` | `false` | 是否推送 80% 预警 |
+| `probe.enabled` | `true` | 是否启用网络探针 |
+| `probe.intervalMs` | `15000` | 正常探测周期 |
+| `probe.retryDelayMs` | `3000` | 故障未确认时的快速重试间隔 |
+| `probe.timeoutMs` | `3000` | 单层探测超时 |
+| `probe.confirmAttempts` / `recoverAttempts` | `2` / `2` | 连续几次故障才报警 / 连续几次正常才恢复 |
+| `probe.targets.l2` | `https://api.openai.com/v1/responses` | 经代理探测的 Codex 真实端点 |
+| `probe.proxy.mode` | `"auto"` | `auto` 读环境变量与系统代理；`manual` 只探测 `ports` |
+| `state.dir` | `~/.codexmonitor` | 运行时状态目录 |
+
+## 工作原理
+
+```
+Watcher（只读 JSONL） ─┐
+                       ├─▶ PolicyEngine（纯函数） ─▶ Notifier ─▶ 飞书 / 控制台
+NetProbe（独立定时）   ─┘                              │
+                                                       └─▶ 投递日志
+```
+
+| 层 | 职责 |
+|---|---|
+| **Watcher** | 增量 tail `rollout-*.jsonl`，解析完成 / 中断 / 额度事件，按 `ts` 排序 |
+| **NetProbe** | 代理端口推导 → L1 TCP / L2 经代理访问 Codex 端点 / L3 直连（辅助）→ 滞回状态机 |
+| **PolicyEngine** | 分级、聚合节流、额度状态机、配额守卫。纯函数，无 IO |
+| **Notifier** | 分片投递、发件箱重试、投递留痕。通道可替换 |
+
+**探针判定**：`L2` 返回 401/2xx 视为通；403（Cloudflare 拦截）、5xx、超时视为不通。代理模式下 `L1 ok + L2 失败` 一律判「代理节点故障」——TUN 模式下直连也走隧道，不能据此判断是否整体断网。
+
+## 运行时产物
+
+| 路径 | 内容 |
+|---|---|
+| `~/.codexmonitor/delivery.jsonl` | 每次投递一条：级别、来源、正文、`ok`、错误码、messageId |
+| `~/.codexmonitor/quota.json` | 额度状态快照，重启后恢复 |
+| `~/.codexmonitor/pending.json` | 投递失败、等待重试的通知 |
 
 ## 开发
 
 ```bash
-# 需要 Node.js >= 22
-node -v
-
-# 安装依赖
-npm install
-
-# 类型检查
-npm run typecheck
-
-# 单元测试
-npm test
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run，224 个用例
+npm run build       # 编译到 dist/
+npm start           # prestart 自动 build，然后常驻运行
 ```
+
+测试覆盖：JSONL 解析、尾部读取、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路。
+
+## 已知限制
+
+- **iLink 通道未实现**：本轮不兼容，`channel: "ilink"` 直接报错
+- **冷启动不回放**：启动前的历史事件不补推；额度状态依赖 `quota.json`，首次运行要等 Codex 下一次 `token_count`
+- **Windows 的 SIGTERM**：父进程 `kill()` 会直接终止进程，`SIGTERM` 处理器不执行；交互式 `Ctrl+C` 正常
+- **`quotaWarn` 尚无冷却**：`quotaWarnCooldownMs` 已声明但未生效，开启 80% 预警后可能偏频繁
 
 ## 许可
 
