@@ -1,7 +1,7 @@
 {
   "name": "codexmonitor",
   "version": "0.1.0",
-  "description": "监控本地 Codex 运行状态，通过微信推送通知",
+  "description": "监控本地 Codex 运行状态，通过飞书 / 控制台推送通知",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,9 +17,9 @@
   },
   "keywords": [
     "codex",
-    "wechat",
-    "ilink",
-    "notification"
+    "feishu",
+    "notification",
+    "monitor"
   ],
   "license": "ISC",
   "devDependencies": {

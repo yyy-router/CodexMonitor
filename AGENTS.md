@@ -1,6 +1,7 @@
 # CodexMonitor —— 项目约定
 
-监控本地 Codex 运行状态，通过微信 iLink / 飞书企业自建应用推送通知。
+监控本地 Codex 运行状态，通过飞书企业自建应用 / 控制台推送通知。
+微信 iLink **暂不兼容**：`notify.channel = "ilink"` 会明确报错，相关实测结论仅作存档。
 技术栈：TypeScript + Node.js（≥ 22）。
 
 ---
@@ -51,9 +52,9 @@
 中文，遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
 
 ```
-feat: 添加 iLink 配额探测探针
+feat: 添加飞书通道的限频重试
 fix: 修正 resets_at 缺失时崩溃的问题
-chore: 升级 @wechatbot/wechatbot 到 2.3.0
+chore: 升级 vitest 到 5.1.0
 docs: 补充部署说明
 ```
 
@@ -86,8 +87,11 @@ docs: 补充部署说明
 
 ---
 
-## 微信 iLink 对接【实测结论】
+## 微信 iLink 对接【实测结论 · 暂不实现】
 
+> **当前版本不实现 iLink。** `notify.channel = "ilink"` 会明确报错，`ILinkNotifier` 保持 stub，
+> 也不引入 `@wechatbot/wechatbot` 依赖。以下内容仅作日后接入时的参考，**不要据此新增依赖或代码**。
+>
 > 2026-10-15 实测确认。实验代码在存档分支 `feat/ilink-probe`（不合并入 main），
 > 保留它是为了日后配额机制若变化能重跑验证。
 
@@ -127,15 +131,27 @@ docs: 补充部署说明
 
 ## 当前阶段
 
-**可行性验证基本完成**，主体功能尚未实现。
+**主体功能已实现并可运行**（`npm start`）。本轮**暂不兼容 iLink**。
 
-已确认：
+已实现：
 
-- 微信 iLink 推送可用，配额机制已量化（见上）
-- 飞书自建应用推送可用（2026-10-19 探针实测）：私聊无需先互动、token 时间门控、手机号 / 邮箱直接解析 open_id、单聊限流约 5 QPS
-- 登录 / 收信 / 推送全链路跑通，凭证与 `context_token` 可跨进程复用
+- Watcher：会话发现 / 增量 tail / JSONL 解析
+- NetProbe：代理端点推导 / L1-L2 探测 / 滞回状态机
+- PolicyEngine：分级 / 聚合节流 / 额度状态机 / 配额守卫
+- 通道：飞书企业自建应用、控制台（`channel: "console"`）
+- 运行时：`main()` 组装、tick 循环、投递发件箱（失败退避重试）、状态持久化
+- 端到端集成测试（真实会话文件 → 投递）
+
+已验证：
+
+- 飞书自建应用推送可用（2026-10-19 实测）：私聊无需先互动、token 时间门控、手机号 / 邮箱直接解析 open_id、单聊限流约 5 QPS
 - Codex 会话日志（`~/.codex/sessions/**/*.jsonl`）可观测完成 / 中断 / 额度事件
 - 多窗口并发是常态（最大并发 2、约 23% 时间在下并发），额度是账号级的
+
+暂不实现：
+
+- 微信 iLink（实测结论见上，保留备查）
+- 冷启动回溯读取最后一条 `token_count`（首次运行的额度初值要等 Codex 下一次事件）
 
 设计文档在本地 `docs/`（未纳入版本控制）。
 

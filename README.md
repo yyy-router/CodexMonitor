@@ -4,6 +4,8 @@
 
 后台常驻，监控本地 Codex 的运行状态，通过飞书（或本地控制台）把任务完成、额度告警、网络故障推给你。
 
+> 当前版本仅支持 **飞书** 与 **控制台** 两种通道；微信 iLink 暂不兼容。
+
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)](#开发)
