@@ -11,7 +11,7 @@
 [![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)](#开发)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](#技术选型)
 [![License](https://img.shields.io/badge/license-ISC-blue)](#许可)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](#已知限制)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#)
 
 ---
@@ -135,6 +135,7 @@ npm start           # prestart 自动 build，然后常驻运行
 
 ## 已知限制
 
+- **平台**：目前仅在 **Windows** 上验证与支持；macOS / Linux 未验证（代理推导依赖 Windows 注册表，其他平台只能走环境变量）
 - **iLink 通道未实现**：本轮不兼容，`channel: "ilink"` 直接报错
 - **冷启动不回放**：启动前的历史事件不补推；额度状态依赖 `quota.json`，首次运行要等 Codex 下一次 `token_count`
 - **Windows 的 SIGTERM**：父进程 `kill()` 会直接终止进程，`SIGTERM` 处理器不执行；交互式 `Ctrl+C` 正常
