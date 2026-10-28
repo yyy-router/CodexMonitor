@@ -51,6 +51,7 @@ class RecordingNotifier implements Notifier {
 const probeResult = (verdict: ProbeVerdict, latencyMs = 10): ProbeResult => {
   const up = verdict === 'ok' || verdict === 'slow'
   return {
+    mode: 'proxy',
     l1: { ok: verdict !== 'proxyNotRunning', status: null, latencyMs: 1 },
     l2: { ok: up, status: up ? 200 : 0, latencyMs: up ? latencyMs : null },
     l3: { ok: true, status: 200, latencyMs: 1 },

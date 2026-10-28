@@ -22,6 +22,7 @@ afterEach(() => {
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 const okProbe = async (): Promise<ProbeResult> => ({
+  mode: 'proxy',
   l1: { ok: true, status: null, latencyMs: 1 },
   l2: { ok: true, status: 200, latencyMs: 1 },
   l3: { ok: true, status: 200, latencyMs: 1 },
