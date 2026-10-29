@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createRuntime, type RuntimeDeps } from '../src/runtime.js'
+import { createRuntime, type RuntimeDeps, type RuntimeEvent } from '../src/runtime.js'
 import { createPolicyEngine } from '../src/policy/engine.js'
 import { classify } from '../src/policy/classify.js'
 import { createAggregator } from '../src/policy/aggregator.js'
@@ -329,5 +329,52 @@ describe('createRuntime', () => {
 
     await rt.stop()
     expect(notifier.stopped).toBe(1)
+  })
+})
+
+describe('createRuntime 事件观察者', () => {
+  it('deliver 成功后发出 delivered 事件', async () => {
+    const events: RuntimeEvent[] = []
+    const { rt } = makeRuntime({ onEvent: (e) => events.push(e) })
+    await rt.deliver([note({ id: 'n1' })])
+
+    const delivered = events.find((e) => e.type === 'delivered')
+    expect(delivered).toBeDefined()
+    if (delivered?.type !== 'delivered') throw new Error('unreachable')
+    expect(delivered.note.id).toBe('n1')
+    expect(delivered.result.ok).toBe(true)
+  })
+
+  it('probeRound 发出 probe 事件（含未跃迁）', async () => {
+    const events: RuntimeEvent[] = []
+    const { rt } = makeRuntime({ onEvent: (e) => events.push(e) })
+    await rt.probeRound()
+    expect(events.filter((e) => e.type === 'probe')).toHaveLength(1)
+  })
+
+  it('start 后发出额度快照事件', async () => {
+    const events: RuntimeEvent[] = []
+    const { rt } = makeRuntime({ onEvent: (e) => events.push(e) })
+    await rt.start()
+    expect(events.some((e) => e.type === 'quota')).toBe(true)
+  })
+
+  it('sendTest 走投递链路并发出 delivered', async () => {
+    const events: RuntimeEvent[] = []
+    const { rt, notifier } = makeRuntime({ onEvent: (e) => events.push(e) })
+    await rt.sendTest()
+    expect(notifier.sent).toHaveLength(1)
+    expect(notifier.sent[0]!.source).toBe('manualTest')
+    expect(events.some((e) => e.type === 'delivered')).toBe(true)
+  })
+
+  it('观察者抛错不影响投递', async () => {
+    const { rt, notifier } = makeRuntime({
+      onEvent: () => {
+        throw new Error('observer boom')
+      },
+    })
+    await expect(rt.deliver([note()])).resolves.toBeUndefined()
+    expect(notifier.sent).toHaveLength(1)
   })
 })

@@ -45,6 +45,13 @@ type PendingNote = {
 /** 网络恢复通知文案 */
 export const RECOVERY_TEXT = '✅ 网络已恢复正常'
 
+/** 运行时事件：TUI 的只读数据源；观察者抛错不得影响投递 */
+export type RuntimeEvent =
+  | { type: 'delivered'; note: Notification; result: DeliveryResult }
+  | { type: 'probe'; result: ProbeResult; transition: StateTransition; state: ProbeState }
+  | { type: 'quota'; snapshot: QuotaSnapshot }
+  | { type: 'pending'; count: number }
+
 export type RuntimeDeps = {
   cfg: Config
   notifier: Notifier
@@ -57,6 +64,8 @@ export type RuntimeDeps = {
   probe: () => Promise<ProbeResult>
   now?: () => number
   log?: (line: string) => void
+  /** 观察者；抛错只记日志 */
+  onEvent?: (e: RuntimeEvent) => void
 }
 
 export type ProbeRoundResult = {
@@ -78,6 +87,8 @@ export type Runtime = {
   tick(): Promise<void>
   /** 跑一轮探测；仅在状态跃迁时产出通知（报警 / 恢复） */
   probeRound(): Promise<ProbeRoundResult>
+  /** 发一条测试通知：走完整投递链路（分片 / 发件箱 / 投递日志 / 事件） */
+  sendTest(): Promise<void>
 }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -94,6 +105,16 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   let lastSnapshot = ''
   let pending: PendingNote[] = []
   let lastPending = ''
+  let lastPendingEmitted = -1
+
+  const emit = (e: RuntimeEvent): void => {
+    if (!deps.onEvent) return
+    try {
+      deps.onEvent(e)
+    } catch (err) {
+      log(`事件观察者异常：${errText(err)}`)
+    }
+  }
 
   /** 只在内容变化时落盘，避免每秒 tick 都写文件 */
   const persistQuota = (): void => {
@@ -103,6 +124,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     try {
       stateStore.save(QUOTA_STATE_KEY, snapshot)
       lastSnapshot = json
+      emit({ type: 'quota', snapshot })
     } catch (e) {
       log(`额度状态保存失败：${errText(e)}`)
     }
@@ -110,12 +132,17 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
 
   const persistPending = (): void => {
     const json = JSON.stringify(pending)
-    if (json === lastPending) return
-    try {
-      stateStore.save(PENDING_STATE_KEY, pending)
-      lastPending = json
-    } catch (e) {
-      log(`发件箱保存失败：${errText(e)}`)
+    if (json !== lastPending) {
+      try {
+        stateStore.save(PENDING_STATE_KEY, pending)
+        lastPending = json
+      } catch (e) {
+        log(`发件箱保存失败：${errText(e)}`)
+      }
+    }
+    if (pending.length !== lastPendingEmitted) {
+      lastPendingEmitted = pending.length
+      emit({ type: 'pending', count: pending.length })
     }
   }
 
@@ -161,6 +188,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         errcode: result.errcode,
         messageId: result.messageId,
       })
+      emit({ type: 'delivered', note: item.note, result })
 
       if (!result.ok) {
         const attempts = item.attempts + 1
@@ -182,6 +210,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       const saved = stateStore.load<QuotaSnapshot>(QUOTA_STATE_KEY)
       if (saved) quota.restore(saved)
       lastSnapshot = JSON.stringify(quota.snapshot())
+      emit({ type: 'quota', snapshot: quota.snapshot() })
 
       // 上次进程遗留的未送达通知：重启后继续重试
       const savedPending = stateStore.load<PendingNote[]>(PENDING_STATE_KEY)
@@ -196,6 +225,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           )
         : []
       lastPending = JSON.stringify(pending)
+      lastPendingEmitted = pending.length
+      emit({ type: 'pending', count: pending.length })
 
       await notifier.start()
     },
@@ -240,7 +271,22 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         ])
       }
 
+      emit({ type: 'probe', result, transition, state })
+
       return { verdict: result.verdict, transition, state }
+    },
+
+    async sendTest() {
+      const at = now()
+      await deliver([
+        {
+          id: `manual-test-${at}`,
+          ts: at,
+          severity: 'info',
+          text: '🔔 CodexMonitor 测试通知',
+          source: 'manualTest',
+        },
+      ])
     },
   }
 }
