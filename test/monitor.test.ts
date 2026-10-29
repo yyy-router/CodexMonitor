@@ -179,6 +179,41 @@ describe('createMonitor', () => {
     expect(stopped).toBe(true)
   })
 
+  it('恢复探针时不与在途探测重叠', async () => {
+    vi.useFakeTimers()
+    const dir = makeDir()
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const monitor = createMonitor(cfg(dir), {
+      notifier: new RecordingNotifier(),
+      probe: async () => {
+        calls++
+        if (calls === 1) await gate
+        return okProbe()
+      },
+      log: () => {},
+      tickIntervalMs: 3_600_000,
+    })
+    await monitor.start()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls).toBe(1)
+
+    monitor.setProbePaused(true)
+    monitor.setProbePaused(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toBe(1) // 上一轮仍在飞，不重入
+
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toBe(2) // 在途结束后立即补跑一轮
+
+    await monitor.stop()
+  })
+
   it('并发 stop 返回同一个 promise，且都等到停止完成', async () => {
     const dir = makeDir()
     let release!: () => void

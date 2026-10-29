@@ -144,6 +144,8 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
   let started = false
   let paused = false
   let stopPromise: Promise<void> | undefined
+  let probeInFlight = false
+  let resumePending = false
   let ticking = false
   let tickTimer: NodeJS.Timeout | undefined
   let probeTimer: NodeJS.Timeout | undefined
@@ -186,6 +188,7 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
 
   const onProbe = async (): Promise<void> => {
     if (stopped || paused) return
+    probeInFlight = true
     let delay = cfg.probe.intervalMs
     try {
       const { verdict, state } = await runtime.probeRound()
@@ -195,8 +198,16 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
     } catch (e) {
       log(`探针失败：${errText(e)}`)
       delay = cfg.probe.retryDelayMs
+    } finally {
+      probeInFlight = false
     }
-    scheduleProbe(delay)
+    // 暂停期间恢复的请求：等这一轮结束再立即补跑，避免两轮并发互相覆盖状态
+    if (resumePending) {
+      resumePending = false
+      scheduleProbe(0)
+    } else {
+      scheduleProbe(delay)
+    }
   }
 
   /** 幂等且并发安全：所有调用方等到同一个停止完成 */
@@ -250,6 +261,7 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
       if (stopped || !cfg.probe.enabled) return
       paused = next
       if (paused) clearProbe()
+      else if (probeInFlight) resumePending = true
       else scheduleProbe(0)
     },
   }
