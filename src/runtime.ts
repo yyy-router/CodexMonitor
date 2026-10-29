@@ -47,7 +47,7 @@ export const RECOVERY_TEXT = '✅ 网络已恢复正常'
 
 /** 运行时事件：TUI 的只读数据源；观察者抛错不得影响投递 */
 export type RuntimeEvent =
-  | { type: 'delivered'; note: Notification; result: DeliveryResult }
+  | { type: 'delivered'; note: Readonly<Notification>; result: Readonly<DeliveryResult> }
   | { type: 'probe'; result: ProbeResult; transition: StateTransition; state: ProbeState }
   | { type: 'quota'; snapshot: QuotaSnapshot }
   | { type: 'pending'; count: number }
@@ -103,6 +103,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   })
 
   let lastSnapshot = ''
+  let lastEmittedQuota = ''
   let pending: PendingNote[] = []
   let lastPending = ''
   let lastPendingEmitted = -1
@@ -120,11 +121,15 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const persistQuota = (): void => {
     const snapshot = quota.snapshot()
     const json = JSON.stringify(snapshot)
+    // 先发事件：落盘失败（磁盘满 / 目录只读）不该让 TUI 停在旧额度上
+    if (json !== lastEmittedQuota) {
+      lastEmittedQuota = json
+      emit({ type: 'quota', snapshot })
+    }
     if (json === lastSnapshot) return
     try {
       stateStore.save(QUOTA_STATE_KEY, snapshot)
       lastSnapshot = json
-      emit({ type: 'quota', snapshot })
     } catch (e) {
       log(`额度状态保存失败：${errText(e)}`)
     }
@@ -188,7 +193,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         errcode: result.errcode,
         messageId: result.messageId,
       })
-      emit({ type: 'delivered', note: item.note, result })
+      // 传副本：观察者（TUI）只能读，不能改写重试决策
+      emit({ type: 'delivered', note: { ...item.note }, result: { ...result } })
 
       if (!result.ok) {
         const attempts = item.attempts + 1
@@ -209,8 +215,10 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     async start() {
       const saved = stateStore.load<QuotaSnapshot>(QUOTA_STATE_KEY)
       if (saved) quota.restore(saved)
-      lastSnapshot = JSON.stringify(quota.snapshot())
-      emit({ type: 'quota', snapshot: quota.snapshot() })
+      const restored = quota.snapshot()
+      lastSnapshot = JSON.stringify(restored)
+      lastEmittedQuota = lastSnapshot
+      emit({ type: 'quota', snapshot: restored })
 
       // 上次进程遗留的未送达通知：重启后继续重试
       const savedPending = stateStore.load<PendingNote[]>(PENDING_STATE_KEY)

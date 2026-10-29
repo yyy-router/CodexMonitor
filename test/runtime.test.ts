@@ -8,7 +8,7 @@ import { classify } from '../src/policy/classify.js'
 import { createAggregator } from '../src/policy/aggregator.js'
 import { createQuotaTracker } from '../src/policy/quota-tracker.js'
 import { createQuotaGuard } from '../src/policy/quota-guard.js'
-import { createStateStore } from '../src/store/state-store.js'
+import { createStateStore, type StateStore } from '../src/store/state-store.js'
 import { createDeliveryLog } from '../src/notify/delivery-log.js'
 import { DEFAULT_CONFIG } from '../src/config.js'
 import type { CodexEvent, Notification, ProbeVerdict } from '../src/events.js'
@@ -376,5 +376,55 @@ describe('createRuntime 事件观察者', () => {
     })
     await expect(rt.deliver([note()])).resolves.toBeUndefined()
     expect(notifier.sent).toHaveLength(1)
+  })
+
+  it('观察者拿到的是副本，修改不影响重试与入队', async () => {
+    let calls = 0
+    const notifier: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async () => {
+        calls++
+        return calls === 1 ? { ok: false, reason: 'down' } : { ok: true }
+      },
+    }
+    const { rt, stateStore } = makeRuntime({
+      notifier,
+      now: () => 1_000_000,
+      onEvent: (e) => {
+        if (e.type === 'delivered') {
+          ;(e.result as unknown as { ok: boolean }).ok = true
+          ;(e.note as unknown as { id: string }).id = 'mutated'
+        }
+      },
+    })
+
+    await rt.deliver([note({ id: 'n1' })])
+
+    const pending = stateStore.load<Array<{ note: { id: string } }>>('pending')
+    expect(pending).toHaveLength(1)
+    expect(pending![0]!.note.id).toBe('n1')
+  })
+
+  it('额度落盘失败时仍发出 quota 事件', async () => {
+    const failingStore = {
+      load: () => null,
+      save: () => {
+        throw new Error('disk full')
+      },
+    } as unknown as StateStore
+    const events: RuntimeEvent[] = []
+    const { rt } = makeRuntime({
+      stateStore: failingStore,
+      log: () => {},
+      onEvent: (e) => events.push(e),
+    })
+
+    await rt.start()
+    const before = events.filter((e) => e.type === 'quota').length
+    await rt.ingest([quotaEvent(100)])
+    const after = events.filter((e) => e.type === 'quota').length
+
+    expect(after).toBeGreaterThan(before)
   })
 })
