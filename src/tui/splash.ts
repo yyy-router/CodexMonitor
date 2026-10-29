@@ -1,32 +1,33 @@
-/** 启动动画：ascii.rest 的 big-text 大字。必须在 Ink 挂载之前播放（它用备用屏幕） */
+/** 启动动画：ascii.rest 的 glitch 大字，两个词轮换。必须在 Ink 挂载之前播放（它用备用屏幕） */
 
-export const SPLASH_SECONDS = 1.5
+/** 轮换显示的两个词（glitch 的画布 64 列，"CodexMonitor" 连写会超宽） */
+export const SPLASH_WORDS = ['Codex', 'Monitor'] as const
 
-/**
- * big-text 的画布是 66 列：按 2 倍像素宽计算，"CODEX" 占 51 列放得下，
- * 完整的 "CODEXMONITOR" 会到 121 列被裁掉。
- */
-export const SPLASH_TEXT = 'Codex'
+/** 每个词的时长：glitch 的第一段撕裂爆发在 0.8~1.2s，正好收在这里 */
+export const SPLASH_SECONDS_PER_WORD = 1.2
 
 export type SplashDeps = {
-  /** 默认懒加载 ascii.rest 并播放；测试注入替身 */
-  play?: (seconds: number) => Promise<unknown>
+  /** 默认懒加载 ascii.rest 逐词播放；测试注入替身 */
+  play?: (words: readonly string[], secondsPerWord: number) => Promise<unknown>
   log?: (line: string) => void
 }
 
-const defaultPlay = async (seconds: number): Promise<unknown> => {
+const defaultPlay = async (words: readonly string[], seconds: number): Promise<void> => {
   const [{ play }, piece] = await Promise.all([
     import('ascii.rest/terminal'),
-    import('ascii.rest/pieces/big-text'),
+    import('ascii.rest/pieces/glitch'),
   ])
-  return play(piece, { seconds, options: { text: SPLASH_TEXT } })
+  // play 的 options 在开播时固定，无法中途换字，所以每个词各播一次
+  for (const text of words) {
+    await play(piece, { seconds, options: { text } })
+  }
 }
 
 /** 装饰性：任何失败都吞掉，绝不影响启动 */
 export async function showSplash(deps: SplashDeps = {}): Promise<void> {
   const log = deps.log ?? ((): void => {})
   try {
-    await (deps.play ?? defaultPlay)(SPLASH_SECONDS)
+    await (deps.play ?? defaultPlay)(SPLASH_WORDS, SPLASH_SECONDS_PER_WORD)
   } catch (e) {
     log(`启动动画跳过：${e instanceof Error ? e.message : String(e)}`)
   }

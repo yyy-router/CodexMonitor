@@ -1,16 +1,23 @@
 import { describe, it, expect } from 'vitest'
-import { SPLASH_SECONDS, showSplash } from '../../src/tui/splash.js'
+import {
+  SPLASH_SECONDS_PER_WORD,
+  SPLASH_WORDS,
+  showSplash,
+} from '../../src/tui/splash.js'
 
 describe('showSplash', () => {
-  it('以固定时长调用播放器', async () => {
-    let got = 0
+  it('轮换两个词：Codex → Monitor', async () => {
+    const calls: Array<{ words: readonly string[]; seconds: number }> = []
     await showSplash({
-      play: async (seconds) => {
-        got = seconds
+      play: async (words, seconds) => {
+        calls.push({ words, seconds })
       },
     })
-    expect(got).toBe(SPLASH_SECONDS)
-    expect(SPLASH_SECONDS).toBe(1.5)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.words).toEqual(['Codex', 'Monitor'])
+    expect(calls[0]!.seconds).toBe(SPLASH_SECONDS_PER_WORD)
+    expect(SPLASH_SECONDS_PER_WORD).toBe(1.2)
   })
 
   it('默认播放器可加载；非 TTY 下安全返回', async () => {
