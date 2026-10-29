@@ -143,6 +143,7 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
   let stopped = false
   let started = false
   let paused = false
+  let stopPromise: Promise<void> | undefined
   let ticking = false
   let tickTimer: NodeJS.Timeout | undefined
   let probeTimer: NodeJS.Timeout | undefined
@@ -198,19 +199,23 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
     scheduleProbe(delay)
   }
 
-  const stop = async (): Promise<void> => {
-    if (stopped) return
+  /** 幂等且并发安全：所有调用方等到同一个停止完成 */
+  const stop = (): Promise<void> => {
+    if (stopPromise) return stopPromise
     stopped = true
-    if (tickTimer) clearInterval(tickTimer)
-    clearProbe()
-    // 等本轮 tick / 探针跑完，避免「已停止」之后还有消息发出、状态还在写
-    await Promise.allSettled([...inFlight])
-    try {
-      await runtime.stop()
-    } catch (e) {
-      log(`停止时出错：${errText(e)}`)
-    }
-    log('已停止')
+    stopPromise = (async () => {
+      if (tickTimer) clearInterval(tickTimer)
+      clearProbe()
+      // 等本轮 tick / 探针 / 测试推送跑完，避免「已停止」之后还有消息发出、状态还在写
+      await Promise.allSettled([...inFlight])
+      try {
+        await runtime.stop()
+      } catch (e) {
+        log(`停止时出错：${errText(e)}`)
+      }
+      log('已停止')
+    })()
+    return stopPromise
   }
 
   const start = async (): Promise<void> => {
@@ -235,7 +240,11 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
     start,
     stop,
     async sendTest() {
-      await runtime.sendTest()
+      // 停止后不再发送；在途的推送纳入 inFlight，stop() 会等它结束
+      if (stopped) return
+      const task = runtime.sendTest()
+      track(task)
+      await task
     },
     setProbePaused(next: boolean) {
       if (stopped || !cfg.probe.enabled) return

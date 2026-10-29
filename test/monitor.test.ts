@@ -9,6 +9,8 @@ import type { DeliveryResult, Notifier } from '../src/notify/notifier.js'
 import type { ProbeResult } from '../src/probe/targets.js'
 import type { RuntimeEvent } from '../src/runtime.js'
 
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
 const dirs: string[] = []
 
 const makeDir = (): string => {
@@ -121,6 +123,97 @@ describe('createMonitor', () => {
     await monitor.stop()
     await monitor.stop()
     expect(notifier.stopped).toBe(1)
+  })
+
+  it('停止后 sendTest 不再投递', async () => {
+    const dir = makeDir()
+    const notifier = new RecordingNotifier()
+    const monitor = createMonitor(cfg(dir), {
+      notifier,
+      probe: okProbe,
+      log: () => {},
+      tickIntervalMs: 3_600_000,
+    })
+    await monitor.start()
+    await monitor.stop()
+    await monitor.sendTest()
+    expect(notifier.sent).toHaveLength(0)
+  })
+
+  it('stop 等待在途的测试推送', async () => {
+    const dir = makeDir()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let sends = 0
+    const notifier: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async () => {
+        sends++
+        await gate
+        return { ok: true }
+      },
+    }
+    const monitor = createMonitor(cfg(dir), {
+      notifier,
+      probe: okProbe,
+      log: () => {},
+      tickIntervalMs: 3_600_000,
+    })
+    await monitor.start()
+
+    const sending = monitor.sendTest()
+    let stopped = false
+    const stopping = monitor.stop().then(() => {
+      stopped = true
+    })
+    await delay(10)
+    expect(stopped).toBe(false)
+    expect(sends).toBe(1)
+
+    release()
+    await sending
+    await stopping
+    expect(stopped).toBe(true)
+  })
+
+  it('并发 stop 返回同一个 promise，且都等到停止完成', async () => {
+    const dir = makeDir()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const notifier: Notifier = {
+      start: async () => {},
+      stop: async () => {
+        await gate
+      },
+      send: async () => ({ ok: true }),
+    }
+    const monitor = createMonitor(cfg(dir), {
+      notifier,
+      probe: okProbe,
+      log: () => {},
+      tickIntervalMs: 3_600_000,
+    })
+    await monitor.start()
+
+    const first = monitor.stop()
+    const second = monitor.stop()
+    expect(second).toBe(first)
+
+    let resolved = false
+    void first.then(() => {
+      resolved = true
+    })
+    await delay(10)
+    expect(resolved).toBe(false)
+
+    release()
+    await first
+    expect(resolved).toBe(true)
   })
 
   it('观察者抛错不影响投递', async () => {
