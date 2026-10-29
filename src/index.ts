@@ -5,6 +5,7 @@
  * TUI / 脚本通过 createMonitor 返回的 Controls 做少量操作（测试推送、暂停探针、停止）。
  */
 
+import { pathToFileURL } from 'node:url'
 import { loadConfig, type Config } from './config.js'
 import { classify } from './policy/classify.js'
 import { createAggregator } from './policy/aggregator.js'
@@ -273,4 +274,18 @@ export async function main(config?: Config, deps: MainDeps = {}): Promise<void> 
   })
   await monitor.stop()
   signalCtl.dispose()
+}
+
+/**
+ * 仅在直接执行 dist/index.js 时启动；被测试 import 时不触发。
+ * 接入 dist/cli.js 后（PR 2）删除。
+ */
+const invokedDirectly =
+  process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (invokedDirectly) {
+  void main().catch((e) => {
+    console.error(`[codexmonitor] 启动失败：${errText(e)}`)
+    process.exitCode = 1
+  })
 }
