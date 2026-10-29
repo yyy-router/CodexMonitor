@@ -13,6 +13,10 @@ describe('showSplash', () => {
     expect(SPLASH_SECONDS).toBe(1.5)
   })
 
+  it('默认播放器可加载；非 TTY 下安全返回', async () => {
+    await expect(showSplash()).resolves.toBeUndefined()
+  })
+
   it('播放失败只记日志，不抛出', async () => {
     const logs: string[] = []
     await expect(
