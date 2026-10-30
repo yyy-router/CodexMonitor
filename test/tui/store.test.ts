@@ -25,6 +25,22 @@ const initial = (): TuiState =>
 const apply = (state: TuiState, event: RuntimeEvent, now = 2_000): TuiState =>
   reduce(state, { type: 'event', event, now })
 
+describe('createInitialState', () => {
+  it('额度阈值默认 80 / 95，可注入', () => {
+    expect(initial().quotaWarnAt).toBe(80)
+    expect(initial().quotaCriticalAt).toBe(95)
+
+    const custom = createInitialState({
+      channel: 'console',
+      probeEnabled: true,
+      now: 0,
+      thresholds: { warn: 70, critical: 90 },
+    })
+    expect(custom.quotaWarnAt).toBe(70)
+    expect(custom.quotaCriticalAt).toBe(90)
+  })
+})
+
 describe('reduce: delivered', () => {
   it('成功：计数 +1，日志含原文，最近结果 ok', () => {
     const s = apply(initial(), { type: 'delivered', note: note(), result: { ok: true } })

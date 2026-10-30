@@ -24,6 +24,9 @@ export type TuiState = {
   channel: Channel
   probeEnabled: boolean
   probePaused: boolean
+  /** 额度告警阈值（用于进度条配色），来自配置 */
+  quotaWarnAt: number
+  quotaCriticalAt: number
   probe: {
     verdict: ProbeVerdict
     status: number | null
@@ -49,6 +52,7 @@ export function createInitialState(input: {
   channel: Channel
   probeEnabled: boolean
   now: number
+  thresholds?: { warn: number; critical: number }
 }): TuiState {
   return {
     startedAt: input.now,
@@ -56,6 +60,8 @@ export function createInitialState(input: {
     channel: input.channel,
     probeEnabled: input.probeEnabled,
     probePaused: false,
+    quotaWarnAt: input.thresholds?.warn ?? 80,
+    quotaCriticalAt: input.thresholds?.critical ?? 95,
     probe: null,
     quota: {},
     deliveredCount: 0,

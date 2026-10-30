@@ -50,6 +50,10 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
       channel: cfg.notify.channel,
       probeEnabled: cfg.probe.enabled,
       now: Date.now(),
+      thresholds: {
+        warn: cfg.notify.thresholds.quotaWarn,
+        critical: cfg.notify.thresholds.quotaCritical,
+      },
     }),
   )
 
