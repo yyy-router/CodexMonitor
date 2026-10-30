@@ -44,6 +44,7 @@ export type TuiAction =
   | { type: 'tick'; now: number }
   | { type: 'toast'; text: string; now: number }
   | { type: 'probePaused'; paused: boolean; now: number }
+  | { type: 'config'; probeEnabled: boolean; now: number }
 
 export function createInitialState(input: {
   channel: Channel
@@ -107,6 +108,14 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
       return { ...state, toast: { text: action.text, at: action.now } }
     case 'probePaused':
       return { ...state, probePaused: action.paused, now: action.now }
+    case 'config':
+      return {
+        ...state,
+        probeEnabled: action.probeEnabled,
+        // 探针被关掉时暂停标志必须一起清掉，否则界面会一直显示「已暂停」
+        probePaused: action.probeEnabled ? state.probePaused : false,
+        now: action.now,
+      }
     default:
       // 运行时防御：未知 action 不改状态，避免把 state 变成 undefined
       return state

@@ -129,6 +129,18 @@ describe('reduce: toast / tick / 暂停', () => {
     expect(s.probePaused).toBe(true)
     expect(s.now).toBe(9_000)
   })
+
+  it('config 动作同步探针开关；关闭时清掉暂停', () => {
+    const paused = reduce(initial(), { type: 'probePaused', paused: true, now: 2_000 })
+    const off = reduce(paused, { type: 'config', probeEnabled: false, now: 3_000 })
+    expect(off.probeEnabled).toBe(false)
+    expect(off.probePaused).toBe(false)
+    expect(off.now).toBe(3_000)
+
+    const on = reduce(off, { type: 'config', probeEnabled: true, now: 4_000 })
+    expect(on.probeEnabled).toBe(true)
+    expect(on.probePaused).toBe(false)
+  })
 })
 
 describe('createTuiStore', () => {
