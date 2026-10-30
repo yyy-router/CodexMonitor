@@ -55,6 +55,19 @@ describe('App', () => {
     unmount()
   })
 
+  it('窄终端退化为单列，仍显示全部区块', () => {
+    const { store, controls } = setup()
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={60} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('CodexMonitor')
+    expect(frame).toContain('额度')
+    expect(frame).toContain('投递')
+    expect(frame).toContain('最近通知')
+    unmount()
+  })
+
   it('按 t 触发测试通知', async () => {
     const { store, controls, calls } = setup()
     const { stdin, unmount } = render(

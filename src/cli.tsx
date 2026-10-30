@@ -50,6 +50,10 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
       channel: cfg.notify.channel,
       probeEnabled: cfg.probe.enabled,
       now: Date.now(),
+      thresholds: {
+        warn: cfg.notify.thresholds.quotaWarn,
+        critical: cfg.notify.thresholds.quotaCritical,
+      },
     }),
   )
 
@@ -84,8 +88,14 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
       const nextCfg = session.currentConfig()
       if (nextCfg) {
         const enabled = nextCfg.probe.enabled
-        // 重载后把看板上的探针开关同步为新配置；关闭时暂停标志一并清掉
-        store.dispatch({ type: 'config', probeEnabled: enabled, now: Date.now() })
+        // 重载后把看板上的探针开关与额度阈值同步为新配置；关闭时暂停标志一并清掉
+        store.dispatch({
+          type: 'config',
+          probeEnabled: enabled,
+          quotaWarnAt: nextCfg.notify.thresholds.quotaWarn,
+          quotaCriticalAt: nextCfg.notify.thresholds.quotaCritical,
+          now: Date.now(),
+        })
         // 用户原本暂停着，就继续暂停新核心，避免状态与界面不一致
         if (enabled && store.getState().probePaused) session.current()?.setProbePaused(true)
       }

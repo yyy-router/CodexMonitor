@@ -24,6 +24,9 @@ export type TuiState = {
   channel: Channel
   probeEnabled: boolean
   probePaused: boolean
+  /** 额度告警阈值（用于进度条配色），来自配置 */
+  quotaWarnAt: number
+  quotaCriticalAt: number
   probe: {
     verdict: ProbeVerdict
     status: number | null
@@ -44,12 +47,19 @@ export type TuiAction =
   | { type: 'tick'; now: number }
   | { type: 'toast'; text: string; now: number }
   | { type: 'probePaused'; paused: boolean; now: number }
-  | { type: 'config'; probeEnabled: boolean; now: number }
+  | {
+      type: 'config'
+      probeEnabled: boolean
+      quotaWarnAt: number
+      quotaCriticalAt: number
+      now: number
+    }
 
 export function createInitialState(input: {
   channel: Channel
   probeEnabled: boolean
   now: number
+  thresholds?: { warn: number; critical: number }
 }): TuiState {
   return {
     startedAt: input.now,
@@ -57,6 +67,8 @@ export function createInitialState(input: {
     channel: input.channel,
     probeEnabled: input.probeEnabled,
     probePaused: false,
+    quotaWarnAt: input.thresholds?.warn ?? 80,
+    quotaCriticalAt: input.thresholds?.critical ?? 95,
     probe: null,
     quota: {},
     deliveredCount: 0,
@@ -112,6 +124,8 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         probeEnabled: action.probeEnabled,
+        quotaWarnAt: action.quotaWarnAt,
+        quotaCriticalAt: action.quotaCriticalAt,
         // 探针被关掉时暂停标志必须一起清掉，否则界面会一直显示「已暂停」
         probePaused: action.probeEnabled ? state.probePaused : false,
         now: action.now,

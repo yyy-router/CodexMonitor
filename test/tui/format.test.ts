@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatClock,
+  formatCountdown,
   formatLatency,
   formatRelative,
   formatUptime,
@@ -97,5 +98,14 @@ describe('时间格式', () => {
   it('formatLatency', () => {
     expect(formatLatency(null)).toBe('-')
     expect(formatLatency(942)).toBe('942ms')
+  })
+
+  it('formatCountdown', () => {
+    expect(formatCountdown(0)).toBe('已到重置时间')
+    expect(formatCountdown(-5_000)).toBe('已到重置时间')
+    expect(formatCountdown(30_000)).toBe('30s')
+    expect(formatCountdown(90_000)).toBe('1m')
+    expect(formatCountdown(2 * 3_600_000 + 13 * 60_000)).toBe('2h 13m')
+    expect(formatCountdown((5 * 24 + 3) * 3_600_000)).toBe('5d 3h')
   })
 })

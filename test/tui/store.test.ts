@@ -25,6 +25,22 @@ const initial = (): TuiState =>
 const apply = (state: TuiState, event: RuntimeEvent, now = 2_000): TuiState =>
   reduce(state, { type: 'event', event, now })
 
+describe('createInitialState', () => {
+  it('额度阈值默认 80 / 95，可注入', () => {
+    expect(initial().quotaWarnAt).toBe(80)
+    expect(initial().quotaCriticalAt).toBe(95)
+
+    const custom = createInitialState({
+      channel: 'console',
+      probeEnabled: true,
+      now: 0,
+      thresholds: { warn: 70, critical: 90 },
+    })
+    expect(custom.quotaWarnAt).toBe(70)
+    expect(custom.quotaCriticalAt).toBe(90)
+  })
+})
+
 describe('reduce: delivered', () => {
   it('成功：计数 +1，日志含原文，最近结果 ok', () => {
     const s = apply(initial(), { type: 'delivered', note: note(), result: { ok: true } })
@@ -130,16 +146,31 @@ describe('reduce: toast / tick / 暂停', () => {
     expect(s.now).toBe(9_000)
   })
 
-  it('config 动作同步探针开关；关闭时清掉暂停', () => {
+  it('config 动作同步探针开关与额度阈值；关闭时清掉暂停', () => {
     const paused = reduce(initial(), { type: 'probePaused', paused: true, now: 2_000 })
-    const off = reduce(paused, { type: 'config', probeEnabled: false, now: 3_000 })
+    const off = reduce(paused, {
+      type: 'config',
+      probeEnabled: false,
+      quotaWarnAt: 70,
+      quotaCriticalAt: 90,
+      now: 3_000,
+    })
     expect(off.probeEnabled).toBe(false)
     expect(off.probePaused).toBe(false)
+    expect(off.quotaWarnAt).toBe(70)
+    expect(off.quotaCriticalAt).toBe(90)
     expect(off.now).toBe(3_000)
 
-    const on = reduce(off, { type: 'config', probeEnabled: true, now: 4_000 })
+    const on = reduce(off, {
+      type: 'config',
+      probeEnabled: true,
+      quotaWarnAt: 80,
+      quotaCriticalAt: 95,
+      now: 4_000,
+    })
     expect(on.probeEnabled).toBe(true)
     expect(on.probePaused).toBe(false)
+    expect(on.quotaCriticalAt).toBe(95)
   })
 })
 
