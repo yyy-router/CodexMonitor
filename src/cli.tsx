@@ -19,7 +19,7 @@ import {
   type ResolvedConfig,
 } from './cli/options.js'
 import { createSetupIO, runSetup } from './cli/setup.js'
-import { restartMonitor } from './cli/reload.js'
+import { createSession } from './cli/session.js'
 import { App } from './tui/app.js'
 import { createInitialState, createTuiStore } from './tui/store.js'
 import { showSplash } from './tui/splash.js'
@@ -43,7 +43,7 @@ const TEMPLATE = `请创建 ~/.codexmonitor/config.json，例如：
 
 const msgOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** TUI 模式：装配 store / monitor / 重载，退出时优雅停止 */
+/** TUI 模式：装配 store / 会话，退出时优雅停止 */
 async function runTui(cfg: Config, configPath: string): Promise<number> {
   const store = createTuiStore(
     createInitialState({
@@ -57,9 +57,6 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     }),
   )
 
-  let currentCfg = cfg
-  let monitor: Monitor | undefined
-
   const build = (next: Config): Monitor =>
     createMonitor(next, {
       // 控制台通道在 TUI 下不能写 stdout，通知本身已通过 delivered 事件进入面板
@@ -69,51 +66,41 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
       onEvent: (event) => store.dispatch({ type: 'event', event, now: Date.now() }),
     })
 
+  // 会话负责串行化重载、退出时收敛所有核心（含在途重载新建的核心）
+  const session = createSession(cfg, build(cfg), {
+    loadConfig: () => loadConfig(configPath),
+    create: build,
+  })
+
   const controls: Controls = {
     sendTest: async () => {
-      if (monitor) await monitor.sendTest()
+      await session.current()?.sendTest()
     },
     setProbePaused: (paused) => {
-      monitor?.setProbePaused(paused)
+      session.current()?.setProbePaused(paused)
     },
-    stop: async () => {
-      if (monitor) await monitor.stop()
-    },
+    stop: () => session.stop(),
   }
 
   const onReload = async (): Promise<string> => {
-    const current = monitor
-    if (!current) return '监控未启动'
-
-    let nextCfg: Config
-    try {
-      // 先校验新配置：失败时旧核心仍在运行，无需回滚
-      nextCfg = loadConfig(configPath)
-    } catch (e) {
-      return `重载失败：${msgOf(e)}`
-    }
-
-    try {
-      monitor = await restartMonitor(current, nextCfg, { create: build })
-      currentCfg = nextCfg
-      return '配置已重载'
-    } catch (e) {
-      const msg = msgOf(e)
-      try {
-        // 用旧配置重建核心（不回读坏文件）
-        monitor = build(currentCfg)
-        await monitor.start()
-        return `重载失败：${msg}（已按上一次配置继续运行）`
-      } catch {
-        monitor = undefined
-        return `重载失败：${msg}（监控已停止，请检查配置后重启）`
+    const message = await session.reload()
+    if (message === '配置已重载') {
+      const nextCfg = session.currentConfig()
+      if (nextCfg) {
+        const enabled = nextCfg.probe.enabled
+        // 重载后把看板上的探针开关同步为新配置；关闭时暂停标志一并清掉
+        store.dispatch({ type: 'config', probeEnabled: enabled, now: Date.now() })
+        // 用户原本暂停着，就继续暂停新核心，避免状态与界面不一致
+        if (enabled && store.getState().probePaused) session.current()?.setProbePaused(true)
       }
     }
+    return message
   }
 
-  monitor = build(cfg)
+  const initial = session.current()
+  if (initial == null) return 1
   try {
-    await monitor.start()
+    await initial.start()
   } catch (e) {
     console.error(`[codexmonitor] 启动失败：${msgOf(e)}`)
     return 1
@@ -123,7 +110,7 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     const app = render(<App store={store} controls={controls} onReload={onReload} />)
     await app.waitUntilExit()
   } finally {
-    await controls.stop()
+    await session.stop()
   }
   return 0
 }
