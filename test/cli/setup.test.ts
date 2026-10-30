@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createSetupIO, runSetup, type Prompter, type SetupIO } from '../../src/cli/setup.js'
@@ -114,6 +114,29 @@ describe('runSetup', () => {
     })
     expect(writes).toHaveLength(1)
   })
+
+  it('--setup 重配：保留未询问的配置段', async () => {
+    const existing = JSON.stringify({
+      notify: { channel: 'feishu', aggregate: { maxItems: 9 } },
+      feishu: { appId: 'old_id', appSecret: 'old_secret', email: 'old@x.com', mobile: '' },
+      codex: { sessionsDir: 'D:/sessions', maxTrackedFiles: 5 },
+      state: { dir: 'D:/state' },
+      probe: { enabled: false },
+    })
+    const { io, writes } = makeIO({
+      existing,
+      prompter: fakePrompter(['', '', 'new@x.com'], ['']),
+    })
+    await runSetup('/tmp/cfg/config.json', io)
+
+    const saved = JSON.parse(writes[0]!.text)
+    expect(saved.codex).toEqual({ sessionsDir: 'D:/sessions', maxTrackedFiles: 5 })
+    expect(saved.state).toEqual({ dir: 'D:/state' })
+    expect(saved.probe).toEqual({ enabled: false })
+    expect(saved.notify.aggregate).toEqual({ maxItems: 9 })
+    expect(saved.notify.channel).toBe('feishu')
+    expect(saved.feishu.email).toBe('new@x.com')
+  })
 })
 
 describe('createSetupIO', () => {
@@ -127,5 +150,15 @@ describe('createSetupIO', () => {
 
     expect(readFileSync(file, 'utf8')).toBe('{"a":1}\n')
     expect(existsSync(`${file}.tmp`)).toBe(false)
+  })
+
+  it.skipIf(process.platform === 'win32')('配置文件权限为 0600', () => {
+    const dir = makeDir()
+    const file = path.join(dir, 'config.json')
+    const io = createSetupIO()
+
+    io.write(file, '{}\n')
+
+    expect(statSync(file).mode & 0o777).toBe(0o600)
   })
 })
