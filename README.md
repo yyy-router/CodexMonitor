@@ -146,7 +146,7 @@ npm run build:exe   # Node 26 SEA：dist-exe/CodexMonitor.exe
 | 工作流 | 触发 | 内容 |
 |---|---|---|
 | `ci.yml` | PR、push `main` | windows-latest：`npm ci` → typecheck → build → test |
-| `build-exe.yml` | 手动、`v*` 标签 | `npm test` → 校验 tag 与版本 → `npm run build:exe` → exe 冒烟 → 上传；标签构建自动创建 Release |
+| `build-exe.yml` | 手动、push `v*` 标签 | 手动运行只产出 dev artifact；push 标签才创建 Release。流程：`npm test` → 校验 tag 与版本 → `npm run build:exe` → exe 冒烟 → 上传 |
 
 打包需要 Node 26.x（`mainFormat: "module"` 的 SEA 能力），两个工作流都按 `.nvmrc` 固定版本。未签名 exe 首次运行会触发 SmartScreen；如需签名，必须在 postject 注入**之后**进行。
 

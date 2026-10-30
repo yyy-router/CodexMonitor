@@ -29,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Verify tag matches package version
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         shell: pwsh
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -62,11 +62,12 @@ jobs:
         id: name
         shell: pwsh
         env:
+          EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
         run: |
-          if ($env:REF_TYPE -eq 'tag') {
+          if ($env:EVENT_NAME -eq 'push' -and $env:REF_TYPE -eq 'tag') {
             $version = $env:REF_NAME
           } else {
             $version = 'dev-' + $env:SHA.Substring(0, 7)
@@ -83,7 +84,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: softprops/action-gh-release@v3
         with:
           files: dist-exe/*.exe
