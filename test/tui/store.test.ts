@@ -146,16 +146,31 @@ describe('reduce: toast / tick / 暂停', () => {
     expect(s.now).toBe(9_000)
   })
 
-  it('config 动作同步探针开关；关闭时清掉暂停', () => {
+  it('config 动作同步探针开关与额度阈值；关闭时清掉暂停', () => {
     const paused = reduce(initial(), { type: 'probePaused', paused: true, now: 2_000 })
-    const off = reduce(paused, { type: 'config', probeEnabled: false, now: 3_000 })
+    const off = reduce(paused, {
+      type: 'config',
+      probeEnabled: false,
+      quotaWarnAt: 70,
+      quotaCriticalAt: 90,
+      now: 3_000,
+    })
     expect(off.probeEnabled).toBe(false)
     expect(off.probePaused).toBe(false)
+    expect(off.quotaWarnAt).toBe(70)
+    expect(off.quotaCriticalAt).toBe(90)
     expect(off.now).toBe(3_000)
 
-    const on = reduce(off, { type: 'config', probeEnabled: true, now: 4_000 })
+    const on = reduce(off, {
+      type: 'config',
+      probeEnabled: true,
+      quotaWarnAt: 80,
+      quotaCriticalAt: 95,
+      now: 4_000,
+    })
     expect(on.probeEnabled).toBe(true)
     expect(on.probePaused).toBe(false)
+    expect(on.quotaCriticalAt).toBe(95)
   })
 })
 
