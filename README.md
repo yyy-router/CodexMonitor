@@ -6,15 +6,17 @@
 
 > 当前版本仅支持 **飞书** 与 **控制台** 两种通道；微信 iLink 暂不兼容。
 
-[![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/node-%E2%89%A526-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)](#开发)
-[![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](#当前状态)
+[![CI](https://github.com/yyy-router/CodexMonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/yyy-router/CodexMonitor/actions/workflows/ci.yml)
+[![Build exe](https://github.com/yyy-router/CodexMonitor/actions/workflows/build-exe.yml/badge.svg)](https://github.com/yyy-router/CodexMonitor/actions/workflows/build-exe.yml)
 [![License](https://img.shields.io/badge/license-ISC-blue)](#许可)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](#已知限制)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#)
 
 ---
+
+<img src="images/tui-dashboard.png" alt="CodexMonitor TUI 看板" width="860">
 
 ## 功能
 
@@ -29,15 +31,16 @@
 
 ## 当前状态
 
-- ✅ **可运行**：`npm start` 启动常驻进程
+- ✅ **可运行**：`npm start` 启动常驻进程（Node ≥ 26）
 - ✅ **推送通道**：飞书企业自建应用、控制台；**iLink 暂不实现**（`channel: "ilink"` 会明确报错）
-- ✅ **零运行时依赖**：只用 `node:*` 内置模块，依赖全部在 devDependencies
+- ✅ **单文件打包**：`npm run build:exe` 产出 `dist-exe/CodexMonitor.exe`（Node SEA，约 105 MB）
+- ⚠️ **运行时依赖**：Ink / React / ascii.rest（TUI 与启动动画）；分发以单文件 exe 为准
 - ✅ **投递可靠**：失败自动进入发件箱，指数退避重试并跨重启恢复
 - ⚠️ **不回放历史**：从进程启动时刻开始 tail 会话日志，启动前的旧事件不会补推
 
 ## 快速开始
 
-需要 Node.js ≥ 22。
+需要 Node.js ≥ 26（仓库内有 `.nvmrc`，可 `nvm use`）。
 
 ```bash
 npm install
@@ -130,12 +133,22 @@ NetProbe（独立定时）   ─┘                              │
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run，224 个用例
+npm test            # vitest run
 npm run build       # 编译到 dist/
 npm start           # prestart 自动 build，然后常驻运行
+npm run build:exe   # Node 26 SEA：dist-exe/CodexMonitor.exe
 ```
 
-测试覆盖：JSONL 解析、尾部读取、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路。
+测试覆盖：JSONL 解析、尾部读取、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路、运行时事件与监控核心、TUI 格式化 / store / 组件。
+
+## 自动化
+
+| 工作流 | 触发 | 内容 |
+|---|---|---|
+| `ci.yml` | PR、push `main` | windows-latest：`npm ci` → typecheck → build → test |
+| `build-exe.yml` | 手动、push `v*` 标签 | 手动运行只产出 dev artifact；push 标签才创建 Release。流程：`npm test` → 校验 tag 与版本 → `npm run build:exe` → exe 冒烟 → 上传 |
+
+打包需要 Node 26.x（`mainFormat: "module"` 的 SEA 能力），两个工作流都按 `.nvmrc` 固定版本。未签名 exe 首次运行会触发 SmartScreen；如需签名，必须在 postject 注入**之后**进行。
 
 ## 已知限制
 

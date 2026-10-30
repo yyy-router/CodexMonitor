@@ -2,7 +2,7 @@
 
 监控本地 Codex 运行状态，通过飞书企业自建应用 / 控制台推送通知。
 微信 iLink **暂不兼容**：`notify.channel = "ilink"` 会明确报错，相关实测结论仅作存档。
-技术栈：TypeScript + Node.js（≥ 22）。
+技术栈：TypeScript + Node.js（≥ 26）；界面为 Ink TUI，可打包为单文件 exe。
 
 ---
 

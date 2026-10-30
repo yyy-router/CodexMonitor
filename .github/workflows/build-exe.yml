@@ -1,0 +1,91 @@
+name: Build exe
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: exe-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package CodexMonitor.exe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:REF_NAME -ne "v$pkgVersion") {
+            throw "标签 $env:REF_NAME 与 package.json 版本 v$pkgVersion 不一致"
+          }
+
+      - name: Test
+        run: npm test
+
+      - name: Build single executable
+        run: npm run build:exe
+
+      - name: Smoke test executable
+        shell: pwsh
+        run: |
+          $expected = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $actual = & "dist-exe/CodexMonitor.exe" --version
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { throw "exe --version 退出码 $code" }
+          $actual = ($actual | Out-String).Trim()
+          if ($actual -ne $expected) {
+            throw "exe 版本 $actual 与 package.json 的 $expected 不一致"
+          }
+          Write-Host "CodexMonitor.exe --version = $actual"
+
+      - name: Name artifact by version
+        id: name
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ($env:EVENT_NAME -eq 'push' -and $env:REF_TYPE -eq 'tag') {
+            $version = $env:REF_NAME
+          } else {
+            $version = 'dev-' + $env:SHA.Substring(0, 7)
+          }
+          $target = "dist-exe/CodexMonitor-$version.exe"
+          Move-Item -Force dist-exe/CodexMonitor.exe $target
+          "artifact=CodexMonitor-$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: dist-exe/*.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist-exe/*.exe
+          generate_release_notes: true
