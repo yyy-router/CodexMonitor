@@ -101,8 +101,8 @@ describe('时间格式', () => {
   })
 
   it('formatCountdown', () => {
-    expect(formatCountdown(0)).toBe('即将重置')
-    expect(formatCountdown(-5_000)).toBe('即将重置')
+    expect(formatCountdown(0)).toBe('已到重置时间')
+    expect(formatCountdown(-5_000)).toBe('已到重置时间')
     expect(formatCountdown(30_000)).toBe('30s')
     expect(formatCountdown(90_000)).toBe('1m')
     expect(formatCountdown(2 * 3_600_000 + 13 * 60_000)).toBe('2h 13m')

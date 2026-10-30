@@ -77,7 +77,7 @@ export function formatLatency(ms: number | null): string {
 
 /** 距离额度重置的倒计时：30s / 1m / 2h 13m / 5d 3h */
 export function formatCountdown(ms: number): string {
-  if (ms <= 0) return '即将重置'
+  if (ms <= 0) return '已到重置时间'
   if (ms < 60_000) return `${Math.ceil(ms / 1000)}s`
   const totalMin = Math.floor(ms / 60_000)
   if (totalMin < 60) return `${totalMin}m`

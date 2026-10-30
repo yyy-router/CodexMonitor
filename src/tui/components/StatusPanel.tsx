@@ -27,7 +27,12 @@ function QuotaRow({ label, window: w, now, warnAt, criticalAt }: QuotaRowProps):
         <Text color={quotaColor(pct, warnAt, criticalAt)}>[{progressBar(w.usedPercent)}]</Text>
         <Text> {pct}%</Text>
       </Text>
-      {resetMs != null && <Text dimColor>   重置 {formatCountdown(resetMs)} 后</Text>}
+      {resetMs != null &&
+        (resetMs <= 0 ? (
+          <Text dimColor>   已到重置时间</Text>
+        ) : (
+          <Text dimColor>   重置 {formatCountdown(resetMs)} 后</Text>
+        ))}
     </Box>
   )
 }

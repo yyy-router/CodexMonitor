@@ -33,8 +33,8 @@ export function NotificationList({
                 {severityIcon(entry.severity)}
               </Text>
               {' '}
+              {entry.ok === false ? <Text color="red">(FAIL) </Text> : null}
               {stripEmoji(entry.text)}
-              {entry.ok === false ? ' (FAIL)' : ''}
             </Text>
           </Box>
         ))

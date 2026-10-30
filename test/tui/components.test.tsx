@@ -57,6 +57,35 @@ describe('StatusPanel', () => {
     expect(lastFrame() ?? '').toContain('待发 2')
     unmount()
   })
+
+  it('重置时间已过：显示「已到重置时间」', () => {
+    const state = reduce(initial(), {
+      type: 'event',
+      event: {
+        type: 'quota',
+        snapshot: {
+          fiveHour: {
+            windowMinutes: 300,
+            usedPercent: 62,
+            resetsAt: 900,
+            waiting: false,
+            notifiedExhausted: false,
+            notifiedReset: false,
+            notifiedCritical: false,
+            lastResetResetsAt: null,
+            lastProcessedTs: 1,
+            lastUpdatedAt: 1,
+          },
+        },
+      },
+      now: 1_000_000,
+    })
+    const { lastFrame, unmount } = render(<StatusPanel state={state} width={26} />)
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('已到重置时间')
+    expect(frame).not.toContain('即将重置')
+    unmount()
+  })
 })
 
 describe('NotificationList', () => {
@@ -91,6 +120,22 @@ describe('NotificationList', () => {
     expect(frame).not.toContain('🚨')
     expect(frame).not.toContain('📦')
     expect(frame).toContain('(FAIL)')
+    unmount()
+  })
+
+  it('长正文被截断时 FAIL 标记仍可见', () => {
+    let s = initial()
+    s = reduce(s, {
+      type: 'event',
+      event: {
+        type: 'delivered',
+        note: { id: 'n', ts: 0, severity: 'info', text: 'x'.repeat(300), source: 'x' },
+        result: { ok: false, reason: 'down' },
+      },
+      now: 70_000,
+    })
+    const { lastFrame, unmount } = render(<NotificationList state={s} width={40} />)
+    expect(lastFrame() ?? '').toContain('(FAIL)')
     unmount()
   })
 
