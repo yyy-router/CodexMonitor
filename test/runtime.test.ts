@@ -194,29 +194,45 @@ describe('createRuntime', () => {
   })
 
   it('probeRound：连续确认才报警，恢复需连续 ok', async () => {
-    const verdicts: ProbeVerdict[] = ['proxyDown', 'proxyDown', 'proxyDown', 'ok', 'ok']
+    const verdicts: ProbeVerdict[] = [
+      'proxyDown',
+      'proxyDown',
+      'proxyDown',
+      'proxyDown',
+      'ok',
+      'ok',
+      'ok',
+    ]
     const { rt, notifier } = makeRuntime({ probe: async () => probeResult(verdicts.shift()!) })
 
     const r1 = await rt.probeRound()
     expect(r1.transition).toBe('none')
     expect(notifier.sent).toHaveLength(0)
 
-    const r2 = await rt.probeRound()
-    expect(r2.transition).toBe('enteredAlert')
+    const r2 = await rt.probeRound() // 第 2 次失败仍未到默认确认次数
+    expect(r2.transition).toBe('none')
+    expect(notifier.sent).toHaveLength(0)
+
+    const r3 = await rt.probeRound() // 第 3 次失败 → 报警
+    expect(r3.transition).toBe('enteredAlert')
     expect(notifier.sent).toHaveLength(1)
     expect(notifier.sent[0]!.severity).toBe('alert')
     expect(notifier.sent[0]!.source).toBe('proxyDown')
 
-    const r3 = await rt.probeRound() // 报警态继续故障 → 不重复报警
-    expect(r3.transition).toBe('none')
-    expect(notifier.sent).toHaveLength(1)
-
-    const r4 = await rt.probeRound() // 第 1 次 ok
+    const r4 = await rt.probeRound() // 报警态继续故障 → 不重复报警
     expect(r4.transition).toBe('none')
     expect(notifier.sent).toHaveLength(1)
 
-    const r5 = await rt.probeRound() // 第 2 次 ok → 恢复
-    expect(r5.transition).toBe('recovered')
+    const r5 = await rt.probeRound() // 第 1 次 ok
+    expect(r5.transition).toBe('none')
+    expect(notifier.sent).toHaveLength(1)
+
+    const r6 = await rt.probeRound() // 第 2 次 ok
+    expect(r6.transition).toBe('none')
+    expect(notifier.sent).toHaveLength(1)
+
+    const r7 = await rt.probeRound() // 第 3 次 ok → 恢复
+    expect(r7.transition).toBe('recovered')
     expect(notifier.sent).toHaveLength(2)
     expect(notifier.sent[1]!.severity).toBe('info')
     expect(notifier.sent[1]!.source).toBe('probeRecovered')

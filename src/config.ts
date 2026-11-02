@@ -92,12 +92,13 @@ export const DEFAULT_CONFIG: Config = {
   },
   probe: {
     enabled: true,
-    intervalMs: 15000,
-    timeoutMs: 3000,
-    slowThresholdMs: 3000,
-    retryDelayMs: 3000,
-    confirmAttempts: 2,
-    recoverAttempts: 2,
+    // 实测 L2 正常 0.8–2s、抖动时易破 3s；确认窗口过短会把抖动放大成告警
+    intervalMs: 20000,
+    timeoutMs: 6000,
+    slowThresholdMs: 2500,
+    retryDelayMs: 5000,
+    confirmAttempts: 3,
+    recoverAttempts: 3,
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36',
     targets: {
