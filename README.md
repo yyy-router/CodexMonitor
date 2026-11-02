@@ -95,10 +95,11 @@ npm start
 | `notify.aggregate.maxPerDay` | `4` | 完成通知每日上限 |
 | `notify.thresholds.warnEnabled` | `false` | 是否推送 80% 预警 |
 | `probe.enabled` | `true` | 是否启用网络探针 |
-| `probe.intervalMs` | `15000` | 正常探测周期 |
-| `probe.retryDelayMs` | `3000` | 故障未确认时的快速重试间隔 |
-| `probe.timeoutMs` | `3000` | 单层探测超时 |
-| `probe.confirmAttempts` / `recoverAttempts` | `2` / `2` | 连续几次故障才报警 / 连续几次正常才恢复 |
+| `probe.intervalMs` | `20000` | 正常探测周期 |
+| `probe.retryDelayMs` | `5000` | 故障未确认时的快速重试间隔 |
+| `probe.timeoutMs` | `6000` | 单层探测超时 |
+| `probe.slowThresholdMs` | `2500` | L2 延迟超过该值判 `slow`（仍视为链路可用） |
+| `probe.confirmAttempts` / `recoverAttempts` | `3` / `3` | 连续几次故障才报警 / 连续几次正常才恢复 |
 | `probe.targets.l2` | `https://api.openai.com/v1/responses` | 经代理探测的 Codex 真实端点 |
 | `probe.proxy.mode` | `"auto"` | `auto` 读环境变量与系统代理；`manual` 只探测 `ports` |
 | `state.dir` | `~/.codexmonitor` | 运行时状态目录 |

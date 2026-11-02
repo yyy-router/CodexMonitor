@@ -177,12 +177,17 @@ describe('main', () => {
     await vi.advanceTimersByTimeAsync(2_999)
     expect(calls).toBe(1)
     await vi.advanceTimersByTimeAsync(1)
-    expect(calls).toBe(2) // 第 2 次失败 → 进入报警
+    expect(calls).toBe(2) // 第 2 次失败，仍未到确认次数
 
-    await vi.advanceTimersByTimeAsync(14_999)
+    await vi.advanceTimersByTimeAsync(2_999)
     expect(calls).toBe(2)
     await vi.advanceTimersByTimeAsync(1)
-    expect(calls).toBe(3) // 报警态不再快速重试
+    expect(calls).toBe(3) // 第 3 次失败 → 进入报警
+
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(calls).toBe(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls).toBe(4) // 报警态不再快速重试
 
     ac.abort()
     await p

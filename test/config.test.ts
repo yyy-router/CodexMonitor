@@ -3,6 +3,19 @@ import os from 'node:os'
 import path from 'node:path'
 import { loadConfig, mergeConfig, DEFAULT_CONFIG } from '../src/config.js'
 
+describe('DEFAULT_CONFIG.probe 灵敏度', () => {
+  it('默认值按实测抖动调参，防止回退', () => {
+    expect(DEFAULT_CONFIG.probe).toMatchObject({
+      intervalMs: 20000,
+      timeoutMs: 6000,
+      slowThresholdMs: 2500,
+      retryDelayMs: 5000,
+      confirmAttempts: 3,
+      recoverAttempts: 3,
+    })
+  })
+})
+
 describe('mergeConfig', () => {
   it('空对象返回完整默认配置', () => {
     expect(mergeConfig({})).toEqual(DEFAULT_CONFIG)
