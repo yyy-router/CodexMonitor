@@ -6,16 +6,23 @@ import { formatClock, severityIcon, stripEmoji } from '../format.js'
 import { severityBold, severityColor } from '../theme.js'
 import type { TuiState } from '../store.js'
 
-const MAX_ROWS = 6
+export const MAX_NOTIFICATION_ROWS = 6
+
+/** 一条通知只占一行：折叠换行与连续空白，避免挤掉顶部状态区 */
+const oneLine = (text: string): string => stripEmoji(text).replace(/\s+/g, ' ').trim()
 
 export function NotificationList({
   state,
   width,
+  maxRows = MAX_NOTIFICATION_ROWS,
 }: {
   state: TuiState
   width: number
+  /** 可见条数上限；由 App 按终端高度计算 */
+  maxRows?: number
 }): React.ReactElement {
-  const recent = state.log.slice(-MAX_ROWS)
+  const limit = Math.max(1, Math.min(MAX_NOTIFICATION_ROWS, Math.trunc(maxRows)))
+  const recent = state.log.slice(-limit)
 
   return (
     <Box flexDirection="column" width={width}>
@@ -34,7 +41,7 @@ export function NotificationList({
               </Text>
               {' '}
               {entry.ok === false ? <Text color="red">(FAIL) </Text> : null}
-              {stripEmoji(entry.text)}
+              {oneLine(entry.text)}
             </Text>
           </Box>
         ))

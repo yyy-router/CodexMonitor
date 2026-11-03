@@ -4,7 +4,10 @@ import React, { useEffect, useSyncExternalStore } from 'react'
 import { Box, Text, useApp, useInput, useStdout } from 'ink'
 import type { Controls } from '../index.js'
 import { Header } from './components/Header.js'
-import { NotificationList } from './components/NotificationList.js'
+import {
+  MAX_NOTIFICATION_ROWS,
+  NotificationList,
+} from './components/NotificationList.js'
 import { StatusPanel } from './components/StatusPanel.js'
 import type { TuiStore } from './store.js'
 
@@ -15,6 +18,8 @@ export type AppProps = {
   onReload: () => Promise<string>
   /** 终端列数；缺省读 stdout，测试可注入 */
   columns?: number
+  /** 终端行数；缺省读 stdout，测试可注入 */
+  rows?: number
 }
 
 /** 低于该宽度退化为单列，并隐藏品牌字 */
@@ -23,18 +28,32 @@ const LEFT_WIDTH = 26
 
 const KEY_BAR = '[t] 测试通知  [p] 暂停探针  [r] 重载配置  [q] 退出'
 
-export function App({ store, controls, onReload, columns: columnsProp }: AppProps): React.ReactElement {
+export function App({
+  store,
+  controls,
+  onReload,
+  columns: columnsProp,
+  rows: rowsProp,
+}: AppProps): React.ReactElement {
   const state = useSyncExternalStore(store.subscribe, store.getState)
   const { stdout } = useStdout()
   const { exit } = useApp()
   const columns = columnsProp ?? (stdout as { columns?: number }).columns ?? 80
+  const rows = rowsProp ?? (stdout as { rows?: number }).rows ?? 24
   const wide = columns >= WIDE_MIN
   const rightWidth = Math.max(24, columns - LEFT_WIDTH - 9)
 
   const quotaLines = (w: { resetsAt: number | null } | undefined): number =>
     w == null ? 1 : w.resetsAt == null ? 1 : 2
   const leftLines = 1 + quotaLines(state.quota.fiveHour) + quotaLines(state.quota.sevenDay) + 1 + 2
-  const dividerLines = Math.max(leftLines, 1 + Math.max(1, state.log.slice(-6).length))
+  // 宽屏固定开销约 9 行（边框/头部/间距/快捷键），窄屏是上下堆叠，需要更多预留
+  const maxNotificationRows = Math.max(
+    1,
+    Math.min(MAX_NOTIFICATION_ROWS, rows - (wide ? 9 : 18)),
+  )
+  const visibleNotes = Math.min(maxNotificationRows, state.log.length)
+  const listLines = 1 + (state.log.length === 0 ? 1 : visibleNotes)
+  const dividerLines = Math.max(leftLines, listLines)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -93,6 +112,7 @@ export function App({ store, controls, onReload, columns: columnsProp }: AppProp
           <NotificationList
             state={state}
             width={wide ? rightWidth : Math.max(24, columns - 4)}
+            maxRows={maxNotificationRows}
           />
         </Box>
       </Box>

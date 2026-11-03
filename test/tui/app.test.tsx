@@ -68,6 +68,30 @@ describe('App', () => {
     unmount()
   })
 
+  it('通知很多时按终端高度收口，顶部状态不被顶出屏幕', () => {
+    const { store, controls } = setup()
+    for (let i = 0; i < 10; i++) {
+      store.dispatch({
+        type: 'event',
+        event: {
+          type: 'delivered',
+          note: { id: `n${i}`, ts: i, severity: 'info', text: `任务${i}\n详情${i}`, source: 'x' },
+          result: { ok: true },
+        },
+        now: 1000 + i,
+      })
+    }
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} rows={16} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('CodexMonitor')
+    expect(frame).toContain('额度')
+    expect(frame).toContain('任务9 详情9')
+    expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(16)
+    unmount()
+  })
+
   it('按 t 触发测试通知', async () => {
     const { store, controls, calls } = setup()
     const { stdin, unmount } = render(
