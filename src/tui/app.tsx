@@ -45,14 +45,26 @@ export function App({
 
   const quotaLines = (w: { resetsAt: number | null } | undefined): number =>
     w == null ? 1 : w.resetsAt == null ? 1 : 2
-  const leftLines = 1 + quotaLines(state.quota.fiveHour) + quotaLines(state.quota.sevenDay) + 1 + 2
-  // 宽屏固定开销约 9 行（边框/头部/间距/快捷键），窄屏是上下堆叠，需要更多预留
-  const maxNotificationRows = Math.max(
-    1,
-    Math.min(MAX_NOTIFICATION_ROWS, rows - (wide ? 9 : 18)),
-  )
+  const normalLeftLines =
+    1 + quotaLines(state.quota.fiveHour) + quotaLines(state.quota.sevenDay) + 1 + 2
+  const headerLines = wide ? 2 : 3
+  // 边框 2 + 头部 + 头部间距 1 + 底部间距 1 + 快捷键 1
+  const chrome = headerLines + 5
+  const normalMinHeight = chrome + normalLeftLines + (wide ? 0 : 2)
+  // 固定区块放不下时收起「投递」与重置倒计时，优先保住额度与网络状态
+  const compact = rows < normalMinHeight
+  const leftLines = compact ? 3 : normalLeftLines
+  const listSpace = wide ? rows - chrome : rows - chrome - leftLines - 1
+  const showNotifications = wide ? listSpace >= leftLines : listSpace >= 1
+  const maxNotificationRows = showNotifications
+    ? Math.max(0, Math.min(MAX_NOTIFICATION_ROWS, listSpace - 1))
+    : 0
   const visibleNotes = Math.min(maxNotificationRows, state.log.length)
-  const listLines = 1 + (state.log.length === 0 ? 1 : visibleNotes)
+  const listLines = !showNotifications
+    ? 0
+    : maxNotificationRows === 0
+      ? 1
+      : 1 + (state.log.length === 0 ? 1 : visibleNotes)
   const dividerLines = Math.max(leftLines, listLines)
 
   useEffect(() => {
@@ -97,7 +109,7 @@ export function App({
       <Header state={state} wide={wide} />
 
       <Box marginTop={1} flexDirection={wide ? 'row' : 'column'}>
-        <StatusPanel state={state} width={wide ? LEFT_WIDTH : undefined} />
+        <StatusPanel state={state} width={wide ? LEFT_WIDTH : undefined} compact={compact} />
         {wide && (
           // 手工竖线：Ink 的部分边框对象不支持，按两栏内容高度画 │
           <Box flexDirection="column" marginLeft={2} marginRight={2}>
@@ -108,13 +120,15 @@ export function App({
             ))}
           </Box>
         )}
-        <Box marginTop={wide ? 0 : 1} flexGrow={1}>
-          <NotificationList
-            state={state}
-            width={wide ? rightWidth : Math.max(24, columns - 4)}
-            maxRows={maxNotificationRows}
-          />
-        </Box>
+        {showNotifications && (
+          <Box marginTop={wide ? 0 : 1} flexGrow={1}>
+            <NotificationList
+              state={state}
+              width={wide ? rightWidth : Math.max(24, columns - 4)}
+              maxRows={maxNotificationRows}
+            />
+          </Box>
+        )}
       </Box>
 
       <Box marginTop={1}>

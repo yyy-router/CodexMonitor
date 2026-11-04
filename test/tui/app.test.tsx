@@ -92,6 +92,83 @@ describe('App', () => {
     unmount()
   })
 
+  const quotaWindow = (
+    windowMinutes: 300 | 10080,
+    usedPercent: number,
+    resetsAt: number,
+  ) => ({
+    windowMinutes,
+    usedPercent,
+    resetsAt,
+    waiting: false,
+    notifiedExhausted: false,
+    notifiedReset: false,
+    notifiedCritical: false,
+    lastResetResetsAt: null,
+    lastProcessedTs: 0,
+    lastUpdatedAt: 0,
+  })
+
+  const pushQuota = (store: ReturnType<typeof setup>['store']): void => {
+    store.dispatch({
+      type: 'event',
+      event: {
+        type: 'quota',
+        snapshot: {
+          fiveHour: quotaWindow(300, 84, 2_000),
+          sevenDay: quotaWindow(10080, 21, 3_000),
+        },
+      },
+      now: 1000,
+    })
+  }
+
+  const pushNotes = (store: ReturnType<typeof setup>['store'], count: number): void => {
+    for (let i = 0; i < count; i++) {
+      store.dispatch({
+        type: 'event',
+        event: {
+          type: 'delivered',
+          note: { id: `q${i}`, ts: i, severity: 'info', text: `通知${i}\n详情${i}`, source: 'x' },
+          result: { ok: true },
+        },
+        now: 1000 + i,
+      })
+    }
+  }
+
+  it('60x18 且双额度倒计时：顶部仍可见且不超屏', () => {
+    const { store, controls } = setup()
+    pushQuota(store)
+    pushNotes(store, 3)
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={60} rows={18} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('CodexMonitor')
+    expect(frame).toContain('额度')
+    expect(frame).toContain('5h')
+    expect(frame).toContain('最近通知')
+    expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(18)
+    unmount()
+  })
+
+  it('60x16 极矮终端：进入紧凑模式，额度仍可见', () => {
+    const { store, controls } = setup()
+    pushQuota(store)
+    pushNotes(store, 3)
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={60} rows={16} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('额度')
+    expect(frame).toContain('5h')
+    expect(frame).toContain('7d')
+    expect(frame).not.toContain('投递')
+    expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(16)
+    unmount()
+  })
+
   it('按 t 触发测试通知', async () => {
     const { store, controls, calls } = setup()
     const { stdin, unmount } = render(

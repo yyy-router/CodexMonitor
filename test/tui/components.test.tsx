@@ -169,6 +169,17 @@ describe('NotificationList', () => {
     unmount()
   })
 
+  it('maxRows=0 时只显示隐藏提示', () => {
+    const { lastFrame, unmount } = render(
+      <NotificationList state={withNotes()} width={60} maxRows={0} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('最近通知')
+    expect(frame).toContain('已隐藏')
+    expect(frame).not.toContain('任务被中断')
+    unmount()
+  })
+
   it('maxRows 只显示最新 N 条', () => {
     let s = initial()
     for (let i = 1; i <= 3; i++) {

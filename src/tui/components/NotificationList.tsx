@@ -21,15 +21,15 @@ export function NotificationList({
   /** 可见条数上限；由 App 按终端高度计算 */
   maxRows?: number
 }): React.ReactElement {
-  const limit = Math.max(1, Math.min(MAX_NOTIFICATION_ROWS, Math.trunc(maxRows)))
-  const recent = state.log.slice(-limit)
+  const limit = Math.max(0, Math.min(MAX_NOTIFICATION_ROWS, Math.trunc(maxRows)))
+  const recent = limit === 0 ? [] : state.log.slice(-limit)
 
   return (
     <Box flexDirection="column" width={width}>
       <Text bold dimColor>
-        最近通知
+        {limit === 0 ? '最近通知（终端过矮，已隐藏）' : '最近通知'}
       </Text>
-      {recent.length === 0 ? (
+      {limit === 0 ? null : recent.length === 0 ? (
         <Text dimColor>暂无通知</Text>
       ) : (
         recent.map((entry, index) => (
