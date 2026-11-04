@@ -13,9 +13,17 @@ type QuotaRowProps = {
   now: number
   warnAt: number
   criticalAt: number
+  compact: boolean
 }
 
-function QuotaRow({ label, window: w, now, warnAt, criticalAt }: QuotaRowProps): React.ReactElement {
+function QuotaRow({
+  label,
+  window: w,
+  now,
+  warnAt,
+  criticalAt,
+  compact,
+}: QuotaRowProps): React.ReactElement {
   if (w == null) return <Text dimColor>{label} --</Text>
 
   const pct = Math.round(w.usedPercent)
@@ -27,7 +35,8 @@ function QuotaRow({ label, window: w, now, warnAt, criticalAt }: QuotaRowProps):
         <Text color={quotaColor(pct, warnAt, criticalAt)}>[{progressBar(w.usedPercent)}]</Text>
         <Text> {pct}%</Text>
       </Text>
-      {resetMs != null &&
+      {!compact &&
+        resetMs != null &&
         (resetMs <= 0 ? (
           <Text dimColor>   已到重置时间</Text>
         ) : (
@@ -40,9 +49,12 @@ function QuotaRow({ label, window: w, now, warnAt, criticalAt }: QuotaRowProps):
 export function StatusPanel({
   state,
   width,
+  compact = false,
 }: {
   state: TuiState
   width?: number
+  /** 终端过矮时收起投递统计与重置倒计时，保留额度百分比 */
+  compact?: boolean
 }): React.ReactElement {
   return (
     <Box flexDirection="column" width={width}>
@@ -55,6 +67,7 @@ export function StatusPanel({
         now={state.now}
         warnAt={state.quotaWarnAt}
         criticalAt={state.quotaCriticalAt}
+        compact={compact}
       />
       <QuotaRow
         label="7d"
@@ -62,16 +75,19 @@ export function StatusPanel({
         now={state.now}
         warnAt={state.quotaWarnAt}
         criticalAt={state.quotaCriticalAt}
+        compact={compact}
       />
-      <Box marginTop={1} flexDirection="column">
-        <Text bold dimColor>
-          投递
-        </Text>
-        <Text>
-          待发 {state.pendingCount} · 已发 {state.deliveredCount} ·{' '}
-          {state.lastDeliveryOk == null ? '-' : state.lastDeliveryOk ? 'ok' : 'FAIL'}
-        </Text>
-      </Box>
+      {!compact && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold dimColor>
+            投递
+          </Text>
+          <Text>
+            待发 {state.pendingCount} · 已发 {state.deliveredCount} ·{' '}
+            {state.lastDeliveryOk == null ? '-' : state.lastDeliveryOk ? 'ok' : 'FAIL'}
+          </Text>
+        </Box>
+      )}
     </Box>
   )
 }

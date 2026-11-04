@@ -144,4 +144,60 @@ describe('NotificationList', () => {
     expect(lastFrame() ?? '').toContain('暂无通知')
     unmount()
   })
+
+  it('多行正文折叠为单行', () => {
+    let s = initial()
+    s = reduce(s, {
+      type: 'event',
+      event: {
+        type: 'delivered',
+        note: {
+          id: 'n',
+          ts: 0,
+          severity: 'info',
+          text: '📦 2 个任务完成\n  · [A] x\n  · [B] y',
+          source: 'x',
+        },
+        result: { ok: true },
+      },
+      now: 70_000,
+    })
+    const { lastFrame, unmount } = render(<NotificationList state={s} width={80} />)
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('2 个任务完成 · [A] x · [B] y')
+    expect(frame.split('\n').filter((line) => line.includes('任务完成'))).toHaveLength(1)
+    unmount()
+  })
+
+  it('maxRows=0 时只显示隐藏提示', () => {
+    const { lastFrame, unmount } = render(
+      <NotificationList state={withNotes()} width={60} maxRows={0} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('最近通知')
+    expect(frame).toContain('已隐藏')
+    expect(frame).not.toContain('任务被中断')
+    unmount()
+  })
+
+  it('maxRows 只显示最新 N 条', () => {
+    let s = initial()
+    for (let i = 1; i <= 3; i++) {
+      s = reduce(s, {
+        type: 'event',
+        event: {
+          type: 'delivered',
+          note: { id: `n${i}`, ts: i, severity: 'info', text: `第${i}条`, source: 'x' },
+          result: { ok: true },
+        },
+        now: 70_000 + i,
+      })
+    }
+    const { lastFrame, unmount } = render(<NotificationList state={s} width={60} maxRows={2} />)
+    const frame = lastFrame() ?? ''
+    expect(frame).not.toContain('第1条')
+    expect(frame).toContain('第2条')
+    expect(frame).toContain('第3条')
+    unmount()
+  })
 })
