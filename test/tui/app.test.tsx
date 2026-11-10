@@ -4,11 +4,19 @@ import { render } from 'ink-testing-library'
 import { App } from '../../src/tui/app.js'
 import { createInitialState, createTuiStore } from '../../src/tui/store.js'
 import type { Controls } from '../../src/index.js'
+import type { WorkHoursConfig } from '../../src/config.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-const setup = () => {
-  const store = createTuiStore(createInitialState({ channel: 'console', probeEnabled: true, now: 0 }))
+const setup = (init: { now?: number; workHours?: WorkHoursConfig } = {}) => {
+  const store = createTuiStore(
+    createInitialState({
+      channel: 'console',
+      probeEnabled: true,
+      now: init.now ?? 0,
+      workHours: init.workHours,
+    }),
+  )
   const calls: string[] = []
   const controls: Controls = {
     sendTest: async () => {
@@ -32,6 +40,42 @@ describe('App', () => {
     expect(frame).toContain('CodexMonitor')
     expect(frame).toContain('通道 console')
     expect(frame).toContain('[q] 退出')
+    unmount()
+  })
+
+  it('显示工作时间段与当前推送状态', () => {
+    const workHours: WorkHoursConfig = {
+      enabled: true,
+      start: '09:00',
+      end: '19:00',
+      days: [1, 2, 3, 4, 5],
+      timezone: 'UTC',
+    }
+    const { store, controls } = setup({ now: Date.UTC(2026, 10, 2, 10, 0), workHours })
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('工作 周一–周五 09:00–19:00')
+    expect(frame).toContain('推送中')
+    unmount()
+  })
+
+  it('工作时间外显示静默中', () => {
+    const workHours: WorkHoursConfig = {
+      enabled: true,
+      start: '09:00',
+      end: '19:00',
+      days: [1, 2, 3, 4, 5],
+      timezone: 'UTC',
+    }
+    const { store, controls } = setup({ now: Date.UTC(2026, 10, 2, 20, 0), workHours })
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('工作 周一–周五 09:00–19:00')
+    expect(frame).toContain('静默中')
     unmount()
   })
 

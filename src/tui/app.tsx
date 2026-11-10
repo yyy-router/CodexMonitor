@@ -50,7 +50,7 @@ export function App({
     w == null ? 1 : w.resetsAt == null ? 1 : 2
   const normalLeftLines =
     1 + quotaLines(state.quota.fiveHour) + quotaLines(state.quota.sevenDay) + 1 + 2
-  const headerLines = wide ? 2 : 3
+  const headerLines = wide ? 3 : 4
   // 边框 2 + 头部 + 头部间距 1 + 底部间距 1 + 快捷键 1
   const chrome = headerLines + 5
   const normalMinHeight = chrome + normalLeftLines + (wide ? 0 : 2)

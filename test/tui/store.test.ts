@@ -219,12 +219,20 @@ describe('reduce: toast / tick / 暂停', () => {
       probeEnabled: false,
       quotaWarnAt: 70,
       quotaCriticalAt: 90,
+      workHours: {
+        enabled: true,
+        start: '08:00',
+        end: '18:00',
+        days: [1, 2, 3],
+        timezone: 'UTC',
+      },
       now: 3_000,
     })
     expect(off.probeEnabled).toBe(false)
     expect(off.probePaused).toBe(false)
     expect(off.quotaWarnAt).toBe(70)
     expect(off.quotaCriticalAt).toBe(90)
+    expect(off.workHours.start).toBe('08:00')
     expect(off.now).toBe(3_000)
 
     const on = reduce(off, {
@@ -232,11 +240,19 @@ describe('reduce: toast / tick / 暂停', () => {
       probeEnabled: true,
       quotaWarnAt: 80,
       quotaCriticalAt: 95,
+      workHours: {
+        enabled: false,
+        start: '09:00',
+        end: '19:00',
+        days: [1, 2, 3, 4, 5],
+        timezone: '',
+      },
       now: 4_000,
     })
     expect(on.probeEnabled).toBe(true)
     expect(on.probePaused).toBe(false)
     expect(on.quotaCriticalAt).toBe(95)
+    expect(on.workHours.enabled).toBe(false)
   })
 })
 

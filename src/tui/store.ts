@@ -1,6 +1,6 @@
 /** TUI 状态：纯 reducer + 一个极小的可订阅 store（供 useSyncExternalStore） */
 
-import type { Channel } from '../config.js'
+import { DEFAULT_CONFIG, type Channel, type WorkHoursConfig } from '../config.js'
 import type { ProbeVerdict, Severity } from '../events.js'
 import type { QuotaSnapshot } from '../policy/quota-tracker.js'
 import type { ProbeState } from '../probe/state-machine.js'
@@ -31,6 +31,8 @@ export type TuiState = {
   /** 额度告警阈值（用于进度条配色），来自配置 */
   quotaWarnAt: number
   quotaCriticalAt: number
+  /** 工作时间段，来自配置 */
+  workHours: WorkHoursConfig
   probe: {
     verdict: ProbeVerdict
     status: number | null
@@ -60,6 +62,7 @@ export type TuiAction =
       probeEnabled: boolean
       quotaWarnAt: number
       quotaCriticalAt: number
+      workHours: WorkHoursConfig
       now: number
     }
 
@@ -68,6 +71,7 @@ export function createInitialState(input: {
   probeEnabled: boolean
   now: number
   thresholds?: { warn: number; critical: number }
+  workHours?: WorkHoursConfig
 }): TuiState {
   return {
     startedAt: input.now,
@@ -77,6 +81,7 @@ export function createInitialState(input: {
     probePaused: false,
     quotaWarnAt: input.thresholds?.warn ?? 80,
     quotaCriticalAt: input.thresholds?.critical ?? 95,
+    workHours: input.workHours ?? DEFAULT_CONFIG.notify.workHours,
     probe: null,
     quota: {},
     deliveredCount: 0,
@@ -158,6 +163,7 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
         probeEnabled: action.probeEnabled,
         quotaWarnAt: action.quotaWarnAt,
         quotaCriticalAt: action.quotaCriticalAt,
+        workHours: action.workHours,
         // 探针被关掉时暂停标志必须一起清掉，否则界面会一直显示「已暂停」
         probePaused: action.probeEnabled ? state.probePaused : false,
         now: action.now,
