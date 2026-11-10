@@ -17,6 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { inject } from 'postject'
+import { removeFileWithRetry } from './remove-file.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const major = Number(process.versions.node.split('.')[0])
@@ -36,7 +37,7 @@ mkdirSync(distDir, { recursive: true })
 // 只覆盖生成物，不删除 dist-exe 下其它文件；运行中的 exe 在 Windows 上无法删除
 if (existsSync(exePath)) {
   try {
-    rmSync(exePath, { force: true, maxRetries: 5, retryDelay: 200 })
+    removeFileWithRetry(exePath)
   } catch {
     console.error(`无法覆盖 ${exePath}`)
     console.error('通常是 CodexMonitor.exe 仍在运行，或被杀毒软件占用。')
