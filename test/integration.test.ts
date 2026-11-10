@@ -60,6 +60,7 @@ const runScenario = async (
       ...DEFAULT_CONFIG.notify,
       channel: 'console',
       aggregate: { ...DEFAULT_CONFIG.notify.aggregate, minIntervalMs: 0 },
+      workHours: { ...DEFAULT_CONFIG.notify.workHours, enabled: false },
     },
     codex: { ...DEFAULT_CONFIG.codex, sessionsDir },
     state: { dir: stateDir },
