@@ -169,6 +169,47 @@ describe('App', () => {
     unmount()
   })
 
+  it('按 n 在最近通知与静默通知之间切换', async () => {
+    const { store, controls } = setup()
+    store.dispatch({
+      type: 'event',
+      event: {
+        type: 'suppressed',
+        entry: {
+          ts: 1000,
+          severity: 'alert',
+          source: 'probeDown',
+          text: '静默告警',
+          reason: 'workHours',
+        },
+      },
+      now: 1000,
+    })
+    store.dispatch({
+      type: 'event',
+      event: {
+        type: 'delivered',
+        note: { id: 'n', ts: 0, severity: 'info', text: '已发送通知', source: 'x' },
+        result: { ok: true },
+      },
+      now: 1001,
+    })
+
+    const { stdin, lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} />,
+    )
+    stdin.write('n')
+    await delay(20)
+    expect(lastFrame() ?? '').toContain('静默通知（1）')
+    expect(lastFrame() ?? '').toContain('静默告警')
+
+    stdin.write('n')
+    await delay(20)
+    expect(lastFrame() ?? '').toContain('最近通知')
+    expect(lastFrame() ?? '').toContain('已发送通知')
+    unmount()
+  })
+
   it('按 t 触发测试通知', async () => {
     const { store, controls, calls } = setup()
     const { stdin, unmount } = render(

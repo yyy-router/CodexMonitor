@@ -26,7 +26,10 @@ export type AppProps = {
 const WIDE_MIN = 80
 const LEFT_WIDTH = 26
 
-const KEY_BAR = '[t] 测试通知  [p] 暂停探针  [r] 重载配置  [q] 退出'
+const keyBar = (showSuppressed: boolean, suppressedCount: number): string =>
+  showSuppressed
+    ? '[t] 测试  [p] 暂停  [r] 重载  [n] 返回  [q] 退出'
+    : `[t] 测试  [p] 暂停  [r] 重载  [n] 静默 ${suppressedCount}  [q] 退出`
 
 export function App({
   store,
@@ -101,6 +104,15 @@ export function App({
       void onReload().then((text) => {
         store.dispatch({ type: 'toast', text, now: Date.now() })
       })
+      return
+    }
+    if (input === 'n') {
+      store.dispatch({ type: 'toggleSuppressed' })
+      store.dispatch({
+        type: 'toast',
+        text: state.showSuppressed ? '已返回最近通知' : '查看静默通知',
+        now,
+      })
     }
   })
 
@@ -132,7 +144,11 @@ export function App({
       </Box>
 
       <Box marginTop={1}>
-        <Text>{state.toast ? state.toast.text : KEY_BAR}</Text>
+        <Text>
+          {state.toast
+            ? state.toast.text
+            : keyBar(state.showSuppressed, state.suppressedLog.length)}
+        </Text>
       </Box>
     </Box>
   )

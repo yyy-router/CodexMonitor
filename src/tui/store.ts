@@ -5,8 +5,10 @@ import type { ProbeVerdict, Severity } from '../events.js'
 import type { QuotaSnapshot } from '../policy/quota-tracker.js'
 import type { ProbeState } from '../probe/state-machine.js'
 import type { RuntimeEvent } from '../runtime.js'
+import type { SuppressedEntry } from '../notify/suppressed-log.js'
 
 export const MAX_LOG = 50
+export const MAX_SUPPRESSED_LOG = 50
 export const TOAST_MS = 5_000
 
 export type LogEntry = {
@@ -16,6 +18,8 @@ export type LogEntry = {
   text: string
   /** null = 本地提示，非投递结果 */
   ok: boolean | null
+  /** 工作时间外被静默的条目 */
+  suppressed?: boolean
 }
 
 export type TuiState = {
@@ -39,6 +43,9 @@ export type TuiState = {
   pendingCount: number
   lastDeliveryOk: boolean | null
   log: LogEntry[]
+  suppressedLog: LogEntry[]
+  /** true 时通知列表显示静默记录 */
+  showSuppressed: boolean
   toast: { text: string; at: number } | null
 }
 
@@ -46,6 +53,7 @@ export type TuiAction =
   | { type: 'event'; event: RuntimeEvent; now: number }
   | { type: 'tick'; now: number }
   | { type: 'toast'; text: string; now: number }
+  | { type: 'toggleSuppressed' }
   | { type: 'probePaused'; paused: boolean; now: number }
   | {
       type: 'config'
@@ -75,9 +83,19 @@ export function createInitialState(input: {
     pendingCount: 0,
     lastDeliveryOk: null,
     log: [],
+    suppressedLog: [],
+    showSuppressed: false,
     toast: null,
   }
 }
+
+const toSuppressedEntry = (entry: SuppressedEntry): LogEntry => ({
+  at: entry.ts,
+  severity: entry.severity,
+  text: entry.text,
+  ok: true,
+  suppressed: true,
+})
 
 export function reduce(state: TuiState, action: TuiAction): TuiState {
   switch (action.type) {
@@ -96,6 +114,18 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
           }
         case 'pending':
           return { ...state, pendingCount: e.count }
+        case 'suppressed':
+          return {
+            ...state,
+            suppressedLog: [...state.suppressedLog, toSuppressedEntry(e.entry)].slice(
+              -MAX_SUPPRESSED_LOG,
+            ),
+          }
+        case 'suppressedHistory':
+          return {
+            ...state,
+            suppressedLog: e.entries.map(toSuppressedEntry).slice(-MAX_SUPPRESSED_LOG),
+          }
         case 'probe':
           return {
             ...state,
@@ -118,6 +148,8 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
     }
     case 'toast':
       return { ...state, toast: { text: action.text, at: action.now } }
+    case 'toggleSuppressed':
+      return { ...state, showSuppressed: !state.showSuppressed }
     case 'probePaused':
       return { ...state, probePaused: action.paused, now: action.now }
     case 'config':

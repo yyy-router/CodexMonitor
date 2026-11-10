@@ -22,15 +22,18 @@ export function NotificationList({
   maxRows?: number
 }): React.ReactElement {
   const limit = Math.max(0, Math.min(MAX_NOTIFICATION_ROWS, Math.trunc(maxRows)))
-  const recent = limit === 0 ? [] : state.log.slice(-limit)
+  const source = state.showSuppressed ? state.suppressedLog : state.log
+  const recent = limit === 0 ? [] : source.slice(-limit)
+  const title = state.showSuppressed ? `静默通知（${source.length}）` : '最近通知'
+  const hiddenTitle = state.showSuppressed ? '静默通知（已隐藏）' : '最近通知（已隐藏）'
 
   return (
     <Box flexDirection="column" width={width}>
       <Text bold dimColor>
-        {limit === 0 ? '最近通知（终端过矮，已隐藏）' : '最近通知'}
+        {limit === 0 ? hiddenTitle : title}
       </Text>
       {limit === 0 ? null : recent.length === 0 ? (
-        <Text dimColor>暂无通知</Text>
+        <Text dimColor>{state.showSuppressed ? '暂无静默通知' : '暂无通知'}</Text>
       ) : (
         recent.map((entry, index) => (
           <Box key={`${entry.at}-${index}`} width={width}>
