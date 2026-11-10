@@ -1,6 +1,13 @@
 {
   "notify": {
-    "channel": "console"
+    "channel": "console",
+    "workHours": {
+      "enabled": true,
+      "start": "09:00",
+      "end": "19:00",
+      "days": [1, 2, 3, 4, 5],
+      "timezone": ""
+    }
   },
   "codex": {
     "sessionsDir": "~/.codex/sessions"
