@@ -4,11 +4,19 @@ import { render } from 'ink-testing-library'
 import { App } from '../../src/tui/app.js'
 import { createInitialState, createTuiStore } from '../../src/tui/store.js'
 import type { Controls } from '../../src/index.js'
+import type { WorkHoursConfig } from '../../src/config.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-const setup = () => {
-  const store = createTuiStore(createInitialState({ channel: 'console', probeEnabled: true, now: 0 }))
+const setup = (init: { now?: number; workHours?: WorkHoursConfig } = {}) => {
+  const store = createTuiStore(
+    createInitialState({
+      channel: 'console',
+      probeEnabled: true,
+      now: init.now ?? 0,
+      workHours: init.workHours,
+    }),
+  )
   const calls: string[] = []
   const controls: Controls = {
     sendTest: async () => {
@@ -32,6 +40,42 @@ describe('App', () => {
     expect(frame).toContain('CodexMonitor')
     expect(frame).toContain('通道 console')
     expect(frame).toContain('[q] 退出')
+    unmount()
+  })
+
+  it('显示工作时间段与当前推送状态', () => {
+    const workHours: WorkHoursConfig = {
+      enabled: true,
+      start: '09:00',
+      end: '19:00',
+      days: [1, 2, 3, 4, 5],
+      timezone: 'UTC',
+    }
+    const { store, controls } = setup({ now: Date.UTC(2026, 10, 2, 10, 0), workHours })
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('工作 周一–周五 09:00–19:00')
+    expect(frame).toContain('推送中')
+    unmount()
+  })
+
+  it('工作时间外显示静默中', () => {
+    const workHours: WorkHoursConfig = {
+      enabled: true,
+      start: '09:00',
+      end: '19:00',
+      days: [1, 2, 3, 4, 5],
+      timezone: 'UTC',
+    }
+    const { store, controls } = setup({ now: Date.UTC(2026, 10, 2, 20, 0), workHours })
+    const { lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} />,
+    )
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('工作 周一–周五 09:00–19:00')
+    expect(frame).toContain('静默中')
     unmount()
   })
 
@@ -166,6 +210,82 @@ describe('App', () => {
     expect(frame).toContain('7d')
     expect(frame).not.toContain('投递')
     expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(16)
+    unmount()
+  })
+
+  it('按 n 在最近通知与静默通知之间切换', async () => {
+    const { store, controls } = setup()
+    store.dispatch({
+      type: 'event',
+      event: {
+        type: 'suppressed',
+        entry: {
+          ts: 1000,
+          severity: 'alert',
+          source: 'probeDown',
+          text: '静默告警',
+          reason: 'workHours',
+        },
+      },
+      now: 1000,
+    })
+    store.dispatch({
+      type: 'event',
+      event: {
+        type: 'delivered',
+        note: { id: 'n', ts: 0, severity: 'info', text: '已发送通知', source: 'x' },
+        result: { ok: true },
+      },
+      now: 1001,
+    })
+
+    const { stdin, lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} />,
+    )
+    stdin.write('n')
+    await delay(20)
+    expect(lastFrame() ?? '').toContain('静默通知（1）')
+    expect(lastFrame() ?? '').toContain('静默告警')
+
+    stdin.write('n')
+    await delay(20)
+    expect(lastFrame() ?? '').toContain('最近通知')
+    expect(lastFrame() ?? '').toContain('已发送通知')
+    unmount()
+  })
+
+  it('宽屏查看静默列表时，分隔线高度跟随当前列表', async () => {
+    const { store, controls } = setup()
+    for (let i = 0; i < 6; i++) {
+      store.dispatch({
+        type: 'event',
+        event: {
+          type: 'suppressed',
+          entry: {
+            ts: 1000 + i,
+            severity: 'alert',
+            source: 'probeDown',
+            text: `静默${i}`,
+            reason: 'workHours',
+          },
+        },
+        now: 1000 + i,
+      })
+    }
+
+    const { stdin, lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} rows={24} />,
+    )
+    stdin.write('n')
+    await delay(20)
+
+    const frame = lastFrame() ?? ''
+    // 左右边框各一条 │，分隔线所在行会多出一条
+    const dividerRows = frame
+      .split('\n')
+      .filter((line) => (line.match(/│/g) ?? []).length >= 3).length
+    expect(frame).toContain('静默通知（6）')
+    expect(dividerRows).toBe(7)
     unmount()
   })
 

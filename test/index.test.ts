@@ -46,7 +46,11 @@ const noopNotifier = (): Notifier => ({
 /** 探针相关的配置：缩短间隔，tick 拉长避免干扰 */
 const probeCfg = (dir: string): Config => ({
   ...DEFAULT_CONFIG,
-  notify: { ...DEFAULT_CONFIG.notify, channel: 'console' },
+  notify: {
+    ...DEFAULT_CONFIG.notify,
+    channel: 'console',
+    workHours: { ...DEFAULT_CONFIG.notify.workHours, enabled: false },
+  },
   codex: { ...DEFAULT_CONFIG.codex, sessionsDir: dir },
   state: { dir },
   probe: { ...DEFAULT_CONFIG.probe, enabled: true, intervalMs: 15000, retryDelayMs: 3000 },
@@ -110,6 +114,10 @@ describe('main', () => {
     }
     const cfg: Config = {
       ...DEFAULT_CONFIG,
+      notify: {
+        ...DEFAULT_CONFIG.notify,
+        workHours: { ...DEFAULT_CONFIG.notify.workHours, enabled: false },
+      },
       codex: { ...DEFAULT_CONFIG.codex, sessionsDir: dir },
       state: { dir },
     }

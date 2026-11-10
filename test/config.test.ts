@@ -16,6 +16,46 @@ describe('DEFAULT_CONFIG.probe 灵敏度', () => {
   })
 })
 
+describe('notify.workHours', () => {
+  it('默认开启，工作日 09:00–19:00，系统本地时区', () => {
+    expect(DEFAULT_CONFIG.notify.workHours).toEqual({
+      enabled: true,
+      start: '09:00',
+      end: '19:00',
+      days: [1, 2, 3, 4, 5],
+      timezone: '',
+    })
+  })
+
+  it('只覆盖 days，其余保持默认', () => {
+    const r = mergeConfig({ notify: { workHours: { days: [0, 6] } } })
+    expect(r.notify.workHours.days).toEqual([0, 6])
+    expect(r.notify.workHours.start).toBe('09:00')
+    expect(r.notify.workHours.timezone).toBe('')
+  })
+
+  it('非法时间格式报错', () => {
+    expect(() => mergeConfig({ notify: { workHours: { start: '9:00' } } })).toThrow(/workHours/)
+  })
+
+  it('start 必须早于 end', () => {
+    expect(() =>
+      mergeConfig({ notify: { workHours: { start: '19:00', end: '09:00' } } }),
+    ).toThrow(/workHours/)
+  })
+
+  it('days 必须在 0–6 且不能为空', () => {
+    expect(() => mergeConfig({ notify: { workHours: { days: [] } } })).toThrow(/workHours/)
+    expect(() => mergeConfig({ notify: { workHours: { days: [7] } } })).toThrow(/workHours/)
+  })
+
+  it('非法时区报错', () => {
+    expect(() =>
+      mergeConfig({ notify: { workHours: { timezone: 'Mars/Olympus' } } }),
+    ).toThrow(/workHours/)
+  })
+})
+
 describe('mergeConfig', () => {
   it('空对象返回完整默认配置', () => {
     expect(mergeConfig({})).toEqual(DEFAULT_CONFIG)

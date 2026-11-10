@@ -5,11 +5,24 @@ import {
   formatLatency,
   formatRelative,
   formatUptime,
+  formatWorkDays,
   progressBar,
   severityIcon,
   stripEmoji,
   verdictIcon,
 } from '../../src/tui/format.js'
+
+describe('formatWorkDays', () => {
+  it('常见组合使用简写', () => {
+    expect(formatWorkDays([1, 2, 3, 4, 5])).toBe('周一–周五')
+    expect(formatWorkDays([0, 1, 2, 3, 4, 5, 6])).toBe('每天')
+    expect(formatWorkDays([0, 6])).toBe('周末')
+  })
+
+  it('自定义组合按顺序拼接', () => {
+    expect(formatWorkDays([5, 1, 3])).toBe('周一/周三/周五')
+  })
+})
 
 describe('stripEmoji', () => {
   it('去掉行首 emoji', () => {

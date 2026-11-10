@@ -34,6 +34,7 @@
 - ✅ **可运行**：`npm start` 启动常驻进程（Node ≥ 26）
 - ✅ **推送通道**：飞书企业自建应用、控制台；**iLink 暂不实现**（`channel: "ilink"` 会明确报错）
 - ✅ **单文件打包**：`npm run build:exe` 产出 `dist-exe/CodexMonitor.exe`（Node SEA，约 105 MB）
+- ✅ **工作时间段**：默认工作日 09:00–19:00，范围外全部静默并记录，TUI 按 `n` 查看
 - ⚠️ **运行时依赖**：Ink / React / ascii.rest（TUI 与启动动画）；分发以单文件 exe 为准
 - ✅ **投递可靠**：失败自动进入发件箱，指数退避重试并跨重启恢复
 - ⚠️ **不回放历史**：从进程启动时刻开始 tail 会话日志，启动前的旧事件不会补推
@@ -94,6 +95,10 @@ npm start
 | `notify.aggregate.maxItems` | `5` | 单条聚合消息最多包含的任务数 |
 | `notify.aggregate.maxPerDay` | `4` | 完成通知每日上限 |
 | `notify.thresholds.warnEnabled` | `false` | 是否推送 80% 预警 |
+| `notify.workHours.enabled` | `true` | 是否启用工作时间限制 |
+| `notify.workHours.start` / `end` | `"09:00"` / `"19:00"` | 工作时间段；`start` 含、`end` 不含 |
+| `notify.workHours.days` | `[1,2,3,4,5]` | 工作日，`0=周日`…`6=周六`；未列出的日期全天静默 |
+| `notify.workHours.timezone` | `""` | 空串=系统本地时区；也可填 IANA 时区 |
 | `probe.enabled` | `true` | 是否启用网络探针 |
 | `probe.intervalMs` | `20000` | 正常探测周期 |
 | `probe.retryDelayMs` | `5000` | 故障未确认时的快速重试间隔 |
@@ -122,11 +127,35 @@ NetProbe（独立定时）   ─┘                              │
 
 **探针判定**：`L2` 返回 401/2xx 视为通；403（Cloudflare 拦截）、5xx、超时视为不通。代理模式下 `L1 ok + L2 失败` 一律判「代理节点故障」——TUN 模式下直连也走隧道，不能据此判断是否整体断网。
 
+## 工作时间与静默记录
+
+默认工作日（周一至周五）09:00–19:00 正常推送；其余时间：
+
+- **所有通知都不推送**，包括任务中断、额度耗尽、网络故障告警
+- 每条通知写入 `~/.codexmonitor/suppressed.jsonl`
+- TUI 头部实时显示工作时间段与「推送中 / 静默中」状态
+- TUI 按 **`n`** 在「最近通知」与「静默通知」之间切换
+- 启动时加载最近 50 条静默记录，重启后仍可查看
+- 手动测试通知（`t`）不受限制
+- 工作时间内已接受、失败后跨到时间段外的重试会继续执行
+- 仅支持同一天内的 `start < end`，不支持 22:00–次日 06:00 这类跨午夜区间
+
+## TUI 快捷键
+
+| 键 | 作用 |
+|---|---|
+| `t` | 发送测试通知 |
+| `p` | 暂停 / 恢复网络探针 |
+| `r` | 重载配置 |
+| `n` | 切换最近通知 / 静默通知 |
+| `q` | 退出 |
+
 ## 运行时产物
 
 | 路径 | 内容 |
 |---|---|
 | `~/.codexmonitor/delivery.jsonl` | 每次投递一条：级别、来源、正文、`ok`、错误码、messageId |
+| `~/.codexmonitor/suppressed.jsonl` | 工作时间外被静默的通知：时间、级别、来源、正文、原因 |
 | `~/.codexmonitor/quota.json` | 额度状态快照，重启后恢复 |
 | `~/.codexmonitor/pending.json` | 投递失败、等待重试的通知 |
 
@@ -140,7 +169,7 @@ npm start           # prestart 自动 build，然后常驻运行
 npm run build:exe   # Node 26 SEA：dist-exe/CodexMonitor.exe
 ```
 
-测试覆盖：JSONL 解析、尾部读取、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路、运行时事件与监控核心、TUI 格式化 / store / 组件。
+测试覆盖：JSONL 解析、尾部读取、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路、运行时事件与监控核心、TUI 格式化 / store / 组件、工作时间判断与静默记录。
 
 ## 自动化
 
@@ -158,6 +187,8 @@ npm run build:exe   # Node 26 SEA：dist-exe/CodexMonitor.exe
 - **冷启动不回放**：启动前的历史事件不补推；额度状态依赖 `quota.json`，首次运行要等 Codex 下一次 `token_count`
 - **Windows 的 SIGTERM**：父进程 `kill()` 会直接终止进程，`SIGTERM` 处理器不执行；交互式 `Ctrl+C` 正常
 - **`quotaWarn` 尚无冷却**：`quotaWarnCooldownMs` 已声明但未生效，开启 80% 预警后可能偏频繁
+- **工作时间外完全静默**：包括告警；只能通过 TUI `n` 或 `suppressed.jsonl` 查看。如果需要告警豁免，应另行配置或修改代码
+- **工作时间不支持跨午夜**：`start >= end` 会报配置错误
 
 ## 许可
 

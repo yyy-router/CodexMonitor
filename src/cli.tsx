@@ -54,6 +54,7 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
         warn: cfg.notify.thresholds.quotaWarn,
         critical: cfg.notify.thresholds.quotaCritical,
       },
+      workHours: cfg.notify.workHours,
     }),
   )
 
@@ -94,6 +95,7 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
           probeEnabled: enabled,
           quotaWarnAt: nextCfg.notify.thresholds.quotaWarn,
           quotaCriticalAt: nextCfg.notify.thresholds.quotaCritical,
+          workHours: nextCfg.notify.workHours,
           now: Date.now(),
         })
         // 用户原本暂停着，就继续暂停新核心，避免状态与界面不一致

@@ -169,6 +169,41 @@ describe('NotificationList', () => {
     unmount()
   })
 
+  it('showSuppressed 时显示静默列表', () => {
+    let s = initial()
+    s = reduce(s, {
+      type: 'event',
+      event: {
+        type: 'suppressed',
+        entry: {
+          ts: 70_000,
+          severity: 'alert',
+          source: 'probeDown',
+          text: '静默告警',
+          reason: 'workHours',
+        },
+      },
+      now: 70_000,
+    })
+    s = reduce(s, {
+      type: 'event',
+      event: {
+        type: 'delivered',
+        note: { id: 'n', ts: 0, severity: 'info', text: '已发送通知', source: 'x' },
+        result: { ok: true },
+      },
+      now: 70_001,
+    })
+    s = reduce(s, { type: 'toggleSuppressed' })
+
+    const { lastFrame, unmount } = render(<NotificationList state={s} width={60} />)
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('静默通知（1）')
+    expect(frame).toContain('静默告警')
+    expect(frame).not.toContain('已发送通知')
+    unmount()
+  })
+
   it('maxRows=0 时只显示隐藏提示', () => {
     const { lastFrame, unmount } = render(
       <NotificationList state={withNotes()} width={60} maxRows={0} />,

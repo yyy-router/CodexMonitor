@@ -16,6 +16,7 @@ import { parseLine, parseSessionMeta } from './watcher/parse.js'
 import { FeishuNotifier } from './notify/feishu-notifier.js'
 import { ConsoleNotifier } from './notify/console-notifier.js'
 import { createDeliveryLog } from './notify/delivery-log.js'
+import { createSuppressedLog } from './notify/suppressed-log.js'
 import { createStateStore } from './store/state-store.js'
 import { detectProxy } from './probe/proxy-detect.js'
 import { probeOnce, type ProbeResult } from './probe/targets.js'
@@ -115,6 +116,7 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
   const stateDir = expandHome(cfg.state.dir)
   const stateStore = createStateStore(stateDir)
   const deliveryLog = createDeliveryLog(stateDir)
+  const suppressedLog = createSuppressedLog(stateDir)
   const tailer = createTailer({
     sessionsDir: expandHome(cfg.codex.sessionsDir),
     maxTrackedFiles: cfg.codex.maxTrackedFiles,
@@ -133,6 +135,7 @@ export function createMonitor(cfg: Config, deps: MonitorDeps = {}): Monitor {
     quota,
     stateStore,
     deliveryLog,
+    suppressedLog,
     probe,
     now,
     log,

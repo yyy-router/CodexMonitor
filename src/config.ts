@@ -10,6 +10,19 @@ import { readFileSync } from 'node:fs'
 /** 推送通道判别：ilink（微信 iLink）、feishu、console（本地验证，打印到 stdout） */
 export type Channel = 'ilink' | 'feishu' | 'console'
 
+/** 工作时间段：范围外静默推送（仅支持同一天内的 start < end） */
+export type WorkHoursConfig = {
+  enabled: boolean
+  /** HH:MM，含 */
+  start: string
+  /** HH:MM，不含 */
+  end: string
+  /** 0=周日 … 6=周六；未列出的日期全天静默 */
+  days: number[]
+  /** IANA 时区；空串表示系统本地时区 */
+  timezone: string
+}
+
 export type Config = {
   codex: {
     /** Codex 会话日志根目录 */
@@ -34,6 +47,7 @@ export type Config = {
       quotaWarnCooldownMs: number
       warnEnabled: boolean
     }
+    workHours: WorkHoursConfig
   }
   probe: {
     enabled: boolean
@@ -88,6 +102,13 @@ export const DEFAULT_CONFIG: Config = {
       quotaExhausted: 100,
       quotaWarnCooldownMs: 1800000,
       warnEnabled: false,
+    },
+    workHours: {
+      enabled: true,
+      start: '09:00',
+      end: '19:00',
+      days: [1, 2, 3, 4, 5],
+      timezone: '',
     },
   },
   probe: {
@@ -154,7 +175,44 @@ function deepMerge(base: unknown, override: unknown): unknown {
   return out
 }
 
-/** 校验必填项：channel 枚举 + feishu 凭证完备性。其余字段超出范围，不逐项校验。 */
+const CLOCK_RE = /^([01]\d|2[0-3]):([0-5]\d)$/
+
+function clockMinutes(value: string): number | null {
+  const m = CLOCK_RE.exec(value)
+  if (!m) return null
+  return Number(m[1]) * 60 + Number(m[2])
+}
+
+function validateWorkHours(w: WorkHoursConfig): void {
+  if (typeof w.enabled !== 'boolean') {
+    throw new Error('notify.workHours.enabled 必须是布尔值')
+  }
+  const start = clockMinutes(w.start)
+  const end = clockMinutes(w.end)
+  if (start == null || end == null) {
+    throw new Error('notify.workHours.start/end 必须是 HH:MM 格式')
+  }
+  if (start >= end) {
+    throw new Error('notify.workHours.start 必须早于 end（不支持跨午夜时间段）')
+  }
+  if (
+    !Array.isArray(w.days) ||
+    w.days.length === 0 ||
+    w.days.some((d) => !Number.isInteger(d) || d < 0 || d > 6) ||
+    new Set(w.days).size !== w.days.length
+  ) {
+    throw new Error('notify.workHours.days 必须是 0–6 的非空不重复数组')
+  }
+  if (w.timezone !== '') {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: w.timezone })
+    } catch {
+      throw new Error(`notify.workHours.timezone 不是合法 IANA 时区：'${w.timezone}'`)
+    }
+  }
+}
+
+/** 校验必填项：channel 枚举 + feishu 凭证完备性 + 工作时间。 */
 function validate(cfg: Config): void {
   const ch = cfg.notify.channel
   if (ch !== 'ilink' && ch !== 'feishu' && ch !== 'console') {
@@ -172,6 +230,7 @@ function validate(cfg: Config): void {
       throw new Error(`channel='feishu' 缺少必填项：${missing.join('、')}`)
     }
   }
+  validateWorkHours(cfg.notify.workHours)
 }
 
 /** 纯函数：与 DEFAULT_CONFIG 深合并并校验必填项（供测试与 main() 复用） */

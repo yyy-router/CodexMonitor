@@ -2,7 +2,14 @@
 
 import React from 'react'
 import { Box, Text } from 'ink'
-import { formatLatency, formatRelative, formatUptime, verdictIcon } from '../format.js'
+import {
+  formatLatency,
+  formatRelative,
+  formatUptime,
+  formatWorkDays,
+  verdictIcon,
+} from '../format.js'
+import { isWithinWorkHours } from '../../notify/work-hours.js'
 import { verdictColor } from '../theme.js'
 import type { TuiState } from '../store.js'
 import { Wordmark } from './Wordmark.js'
@@ -22,6 +29,19 @@ export function Header({
     ? `L2 ${probe.status == null ? '-' : probe.status} · ${formatLatency(probe.latencyMs)} · ${formatRelative(state.now - probe.at)}`
     : '等待首次探测'
   const meta = `通道 ${state.channel} · 运行 ${formatUptime(state.now - state.startedAt)}`
+  const within = isWithinWorkHours(state.now, state.workHours)
+  const workLabel = state.workHours.enabled
+    ? `工作 ${formatWorkDays(state.workHours.days)} ${state.workHours.start}–${state.workHours.end}`
+    : '工作 不限时'
+  const workStatus = within ? '推送中' : '静默中'
+  const workColor = !state.workHours.enabled ? 'gray' : within ? 'green' : 'yellow'
+
+  const workLine = (
+    <Text wrap="truncate">
+      <Text dimColor>{workLabel} · </Text>
+      <Text color={workColor}>{workStatus}</Text>
+    </Text>
+  )
 
   if (!wide) {
     return (
@@ -31,6 +51,7 @@ export function Header({
         <Text>
           网络 <Text color={color}>{icon}</Text> {detail}
         </Text>
+        {workLine}
       </Box>
     )
   }
@@ -43,6 +64,7 @@ export function Header({
         <Text>
           网络 <Text color={color}>{icon}</Text> {detail}
         </Text>
+        {workLine}
       </Box>
     </Box>
   )

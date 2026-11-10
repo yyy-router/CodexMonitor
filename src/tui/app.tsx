@@ -26,7 +26,10 @@ export type AppProps = {
 const WIDE_MIN = 80
 const LEFT_WIDTH = 26
 
-const KEY_BAR = '[t] 测试通知  [p] 暂停探针  [r] 重载配置  [q] 退出'
+const keyBar = (showSuppressed: boolean, suppressedCount: number): string =>
+  showSuppressed
+    ? '[t] 测试  [p] 暂停  [r] 重载  [n] 返回  [q] 退出'
+    : `[t] 测试  [p] 暂停  [r] 重载  [n] 静默 ${suppressedCount}  [q] 退出`
 
 export function App({
   store,
@@ -47,7 +50,7 @@ export function App({
     w == null ? 1 : w.resetsAt == null ? 1 : 2
   const normalLeftLines =
     1 + quotaLines(state.quota.fiveHour) + quotaLines(state.quota.sevenDay) + 1 + 2
-  const headerLines = wide ? 2 : 3
+  const headerLines = wide ? 3 : 4
   // 边框 2 + 头部 + 头部间距 1 + 底部间距 1 + 快捷键 1
   const chrome = headerLines + 5
   const normalMinHeight = chrome + normalLeftLines + (wide ? 0 : 2)
@@ -59,12 +62,13 @@ export function App({
   const maxNotificationRows = showNotifications
     ? Math.max(0, Math.min(MAX_NOTIFICATION_ROWS, listSpace - 1))
     : 0
-  const visibleNotes = Math.min(maxNotificationRows, state.log.length)
+  const activeLog = state.showSuppressed ? state.suppressedLog : state.log
+  const visibleNotes = Math.min(maxNotificationRows, activeLog.length)
   const listLines = !showNotifications
     ? 0
     : maxNotificationRows === 0
       ? 1
-      : 1 + (state.log.length === 0 ? 1 : visibleNotes)
+      : 1 + (activeLog.length === 0 ? 1 : visibleNotes)
   const dividerLines = Math.max(leftLines, listLines)
 
   useEffect(() => {
@@ -101,6 +105,15 @@ export function App({
       void onReload().then((text) => {
         store.dispatch({ type: 'toast', text, now: Date.now() })
       })
+      return
+    }
+    if (input === 'n') {
+      store.dispatch({ type: 'toggleSuppressed' })
+      store.dispatch({
+        type: 'toast',
+        text: state.showSuppressed ? '已返回最近通知' : '查看静默通知',
+        now,
+      })
     }
   })
 
@@ -132,7 +145,11 @@ export function App({
       </Box>
 
       <Box marginTop={1}>
-        <Text>{state.toast ? state.toast.text : KEY_BAR}</Text>
+        <Text>
+          {state.toast
+            ? state.toast.text
+            : keyBar(state.showSuppressed, state.suppressedLog.length)}
+        </Text>
       </Box>
     </Box>
   )

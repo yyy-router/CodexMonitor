@@ -12,6 +12,8 @@ import type { QuotaSnapshot, QuotaTracker } from './policy/quota-tracker.js'
 import type { DeliveryResult, Notifier } from './notify/notifier.js'
 import { splitLongMessage } from './notify/notifier.js'
 import type { DeliveryLog } from './notify/delivery-log.js'
+import type { SuppressedEntry, SuppressedLog } from './notify/suppressed-log.js'
+import { isWithinWorkHours } from './notify/work-hours.js'
 import type { StateStore } from './store/state-store.js'
 import {
   createProbeStateMachine,
@@ -51,6 +53,8 @@ export type RuntimeEvent =
   | { type: 'probe'; result: ProbeResult; transition: StateTransition; state: ProbeState }
   | { type: 'quota'; snapshot: QuotaSnapshot }
   | { type: 'pending'; count: number }
+  | { type: 'suppressed'; entry: SuppressedEntry }
+  | { type: 'suppressedHistory'; entries: SuppressedEntry[] }
 
 export type RuntimeDeps = {
   cfg: Config
@@ -60,6 +64,8 @@ export type RuntimeDeps = {
   quota: QuotaTracker
   stateStore: StateStore
   deliveryLog: DeliveryLog
+  /** 工作时间外被静默的通知记录；缺省不落盘 */
+  suppressedLog?: SuppressedLog
   /** 跑一轮网络探测；由 index 注入（真实探测或测试替身） */
   probe: () => Promise<ProbeResult>
   now?: () => number
@@ -94,7 +100,7 @@ export type Runtime = {
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 export function createRuntime(deps: RuntimeDeps): Runtime {
-  const { cfg, notifier, policy, quota, stateStore, deliveryLog, probe } = deps
+  const { cfg, notifier, policy, quota, stateStore, deliveryLog, suppressedLog, probe } = deps
   const now = deps.now ?? (() => Date.now())
   const log = deps.log ?? ((line: string) => console.log(line))
   const stateMachine = createProbeStateMachine({
@@ -164,14 +170,35 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
    * 失败的通知按原 id 入队（飞书 uuid 幂等，重发不会重复送达），
    * 指数退避重试，超过 MAX_DELIVERY_ATTEMPTS 次后放弃。
    */
+  /** 工作时间外的新通知只留痕不发送；手动测试与已接受的重试不受影响 */
+  const recordSuppressed = (note: Notification, at: number): void => {
+    const entry: SuppressedEntry = {
+      ts: at,
+      severity: note.severity,
+      source: note.source,
+      text: note.text,
+      reason: 'workHours',
+    }
+    suppressedLog?.record(entry)
+    emit({ type: 'suppressed', entry })
+  }
+
   const deliver = async (notes: Notification[]): Promise<void> => {
     const at = now()
     const due = pending.filter((p) => p.nextAttemptAt <= at)
     pending = pending.filter((p) => p.nextAttemptAt > at)
 
+    const fresh = notes.filter((note) => {
+      if (note.source === 'manualTest' || isWithinWorkHours(at, cfg.notify.workHours)) {
+        return true
+      }
+      recordSuppressed(note, at)
+      return false
+    })
+
     const batch: PendingNote[] = [
       ...due,
-      ...notes.flatMap(expand).map((note) => ({ note, attempts: 0, nextAttemptAt: 0 })),
+      ...fresh.flatMap(expand).map((note) => ({ note, attempts: 0, nextAttemptAt: 0 })),
     ]
 
     for (const item of batch) {
@@ -235,6 +262,11 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       lastPending = JSON.stringify(pending)
       lastPendingEmitted = pending.length
       emit({ type: 'pending', count: pending.length })
+
+      const history = suppressedLog?.read(50) ?? []
+      if (history.length > 0) {
+        emit({ type: 'suppressedHistory', entries: history.map((entry) => ({ ...entry })) })
+      }
 
       await notifier.start()
     },

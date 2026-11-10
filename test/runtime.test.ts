@@ -13,6 +13,7 @@ import { createDeliveryLog } from '../src/notify/delivery-log.js'
 import { DEFAULT_CONFIG } from '../src/config.js'
 import type { CodexEvent, Notification, ProbeVerdict } from '../src/events.js'
 import type { DeliveryResult, Notifier } from '../src/notify/notifier.js'
+import type { SuppressedEntry, SuppressedLog } from '../src/notify/suppressed-log.js'
 import type { ProbeResult } from '../src/probe/targets.js'
 
 const dirs: string[] = []
@@ -61,6 +62,26 @@ const probeResult = (verdict: ProbeVerdict, latencyMs = 10): ProbeResult => {
 
 const thresholds = DEFAULT_CONFIG.notify.thresholds
 
+const baseCfg = {
+  ...DEFAULT_CONFIG,
+  notify: {
+    ...DEFAULT_CONFIG.notify,
+    // 大多数用例不关心工作时间；需要门控的用例显式覆盖 cfg
+    workHours: { ...DEFAULT_CONFIG.notify.workHours, enabled: false },
+  },
+}
+
+const memorySuppressed = (): { entries: SuppressedEntry[]; log: SuppressedLog } => {
+  const entries: SuppressedEntry[] = []
+  return {
+    entries,
+    log: {
+      record: (entry) => entries.push(entry),
+      read: (limit) => entries.slice(-limit),
+    },
+  }
+}
+
 const makeRuntime = (over: Partial<RuntimeDeps> = {}) => {
   const dir = makeDir()
   const notifier = new RecordingNotifier()
@@ -75,7 +96,7 @@ const makeRuntime = (over: Partial<RuntimeDeps> = {}) => {
   const stateStore = createStateStore(dir)
   const deliveryLog = createDeliveryLog(dir)
   const rt = createRuntime({
-    cfg: DEFAULT_CONFIG,
+    cfg: baseCfg,
     notifier,
     policy,
     quota,
@@ -442,5 +463,123 @@ describe('createRuntime 事件观察者', () => {
     const after = events.filter((e) => e.type === 'quota').length
 
     expect(after).toBeGreaterThan(before)
+  })
+
+  it('工作时间外静默：不发送，但记录并发出 suppressed 事件', async () => {
+    const outsideMonday = Date.UTC(2026, 10, 2, 20, 0) // 周一 20:00 UTC
+    const suppressed = memorySuppressed()
+    const events: RuntimeEvent[] = []
+    const { rt, notifier } = makeRuntime({
+      cfg: {
+        ...baseCfg,
+        notify: {
+          ...baseCfg.notify,
+          workHours: { ...baseCfg.notify.workHours, enabled: true, timezone: 'UTC' },
+        },
+      },
+      now: () => outsideMonday,
+      suppressedLog: suppressed.log,
+      onEvent: (e) => events.push(e),
+    })
+
+    await rt.deliver([note({ source: 'turnCompleteAggregated', text: '静默内容' })])
+
+    expect(notifier.sent).toHaveLength(0)
+    expect(suppressed.entries).toHaveLength(1)
+    expect(suppressed.entries[0]).toMatchObject({ reason: 'workHours', text: '静默内容' })
+    expect(events.some((e) => e.type === 'suppressed')).toBe(true)
+  })
+
+  it('工作时间内正常发送', async () => {
+    const insideMonday = Date.UTC(2026, 10, 2, 10, 0) // 周一 10:00 UTC
+    const suppressed = memorySuppressed()
+    const { rt, notifier } = makeRuntime({
+      cfg: {
+        ...baseCfg,
+        notify: {
+          ...baseCfg.notify,
+          workHours: { ...baseCfg.notify.workHours, enabled: true, timezone: 'UTC' },
+        },
+      },
+      now: () => insideMonday,
+      suppressedLog: suppressed.log,
+    })
+
+    await rt.deliver([note()])
+
+    expect(notifier.sent).toHaveLength(1)
+    expect(suppressed.entries).toHaveLength(0)
+  })
+
+  it('手动测试通知绕过工作时间限制', async () => {
+    const outsideMonday = Date.UTC(2026, 10, 2, 20, 0)
+    const suppressed = memorySuppressed()
+    const { rt, notifier } = makeRuntime({
+      cfg: {
+        ...baseCfg,
+        notify: {
+          ...baseCfg.notify,
+          workHours: { ...baseCfg.notify.workHours, enabled: true, timezone: 'UTC' },
+        },
+      },
+      now: () => outsideMonday,
+      suppressedLog: suppressed.log,
+    })
+
+    await rt.deliver([note({ source: 'manualTest' })])
+
+    expect(notifier.sent).toHaveLength(1)
+    expect(suppressed.entries).toHaveLength(0)
+  })
+
+  it('工作时间外继续重试已接受通知', async () => {
+    let calls = 0
+    const notifier: Notifier = {
+      start: async () => {},
+      stop: async () => {},
+      send: async () => {
+        calls += 1
+        return calls === 1 ? { ok: false, reason: 'down' } : { ok: true, messageId: 'm' }
+      },
+    }
+    let clock = Date.UTC(2026, 10, 2, 10, 0) // 周一 10:00 UTC
+    const suppressed = memorySuppressed()
+    const { rt } = makeRuntime({
+      cfg: {
+        ...baseCfg,
+        notify: {
+          ...baseCfg.notify,
+          workHours: { ...baseCfg.notify.workHours, enabled: true, timezone: 'UTC' },
+        },
+      },
+      notifier,
+      now: () => clock,
+      suppressedLog: suppressed.log,
+    })
+
+    await rt.deliver([note()])
+    clock = Date.UTC(2026, 10, 2, 20, 0) // 跨到工作时间外
+    await rt.deliver([])
+
+    expect(calls).toBe(2)
+    expect(suppressed.entries).toHaveLength(0)
+  })
+
+  it('启动时加载静默历史', async () => {
+    const suppressed = memorySuppressed()
+    suppressed.log.record({
+      ts: 1,
+      severity: 'info',
+      source: 'turnCompleteAggregated',
+      text: '历史静默',
+      reason: 'workHours',
+    })
+    const events: RuntimeEvent[] = []
+    const { rt } = makeRuntime({ suppressedLog: suppressed.log, onEvent: (e) => events.push(e) })
+
+    await rt.start()
+
+    const history = events.find((e) => e.type === 'suppressedHistory')
+    expect(history).toMatchObject({ type: 'suppressedHistory', entries: [{ text: '历史静默' }] })
   })
 })

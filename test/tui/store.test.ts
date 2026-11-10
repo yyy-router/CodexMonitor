@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   MAX_LOG,
+  MAX_SUPPRESSED_LOG,
   TOAST_MS,
   createInitialState,
   createTuiStore,
@@ -73,6 +74,71 @@ describe('reduce: delivered', () => {
     expect(s.log).toHaveLength(MAX_LOG)
     expect(s.log[s.log.length - 1]!.text).toBe(`第 ${MAX_LOG + 9} 条`)
     expect(s.log[0]!.text).toBe('第 10 条')
+  })
+})
+
+describe('reduce: suppressed', () => {
+  const suppressed = (text: string) =>
+    apply(initial(), {
+      type: 'suppressed',
+      entry: {
+        ts: 70_000,
+        severity: 'alert',
+        source: 'probeDown',
+        text,
+        reason: 'workHours',
+      },
+    })
+
+  it('静默条目进入独立列表并带 suppressed 标记', () => {
+    const s = suppressed('静默告警')
+    expect(s.log).toHaveLength(0)
+    expect(s.suppressedLog).toHaveLength(1)
+    expect(s.suppressedLog[0]).toMatchObject({
+      at: 70_000,
+      severity: 'alert',
+      text: '静默告警',
+      suppressed: true,
+    })
+  })
+
+  it('suppressedHistory 替换历史列表', () => {
+    let s = suppressed('旧条目')
+    s = apply(s, {
+      type: 'suppressedHistory',
+      entries: [
+        { ts: 1, severity: 'info', source: 'a', text: '历史 1', reason: 'workHours' },
+        { ts: 2, severity: 'info', source: 'b', text: '历史 2', reason: 'workHours' },
+      ],
+    })
+    expect(s.suppressedLog.map((e) => e.text)).toEqual(['历史 1', '历史 2'])
+  })
+
+  it(`静默列表上限 ${MAX_SUPPRESSED_LOG} 条`, () => {
+    let s = initial()
+    for (let i = 0; i < MAX_SUPPRESSED_LOG + 5; i++) {
+      s = apply(s, {
+        type: 'suppressed',
+        entry: {
+          ts: i,
+          severity: 'info',
+          source: 'x',
+          text: `第 ${i} 条`,
+          reason: 'workHours',
+        },
+      })
+    }
+    expect(s.suppressedLog).toHaveLength(MAX_SUPPRESSED_LOG)
+    expect(s.suppressedLog[s.suppressedLog.length - 1]!.text).toBe(
+      `第 ${MAX_SUPPRESSED_LOG + 4} 条`,
+    )
+  })
+
+  it('toggleSuppressed 切换查看状态', () => {
+    expect(initial().showSuppressed).toBe(false)
+    const on = reduce(initial(), { type: 'toggleSuppressed' })
+    expect(on.showSuppressed).toBe(true)
+    expect(reduce(on, { type: 'toggleSuppressed' }).showSuppressed).toBe(false)
   })
 })
 
@@ -153,12 +219,20 @@ describe('reduce: toast / tick / 暂停', () => {
       probeEnabled: false,
       quotaWarnAt: 70,
       quotaCriticalAt: 90,
+      workHours: {
+        enabled: true,
+        start: '08:00',
+        end: '18:00',
+        days: [1, 2, 3],
+        timezone: 'UTC',
+      },
       now: 3_000,
     })
     expect(off.probeEnabled).toBe(false)
     expect(off.probePaused).toBe(false)
     expect(off.quotaWarnAt).toBe(70)
     expect(off.quotaCriticalAt).toBe(90)
+    expect(off.workHours.start).toBe('08:00')
     expect(off.now).toBe(3_000)
 
     const on = reduce(off, {
@@ -166,11 +240,19 @@ describe('reduce: toast / tick / 暂停', () => {
       probeEnabled: true,
       quotaWarnAt: 80,
       quotaCriticalAt: 95,
+      workHours: {
+        enabled: false,
+        start: '09:00',
+        end: '19:00',
+        days: [1, 2, 3, 4, 5],
+        timezone: '',
+      },
       now: 4_000,
     })
     expect(on.probeEnabled).toBe(true)
     expect(on.probePaused).toBe(false)
     expect(on.quotaCriticalAt).toBe(95)
+    expect(on.workHours.enabled).toBe(false)
   })
 })
 

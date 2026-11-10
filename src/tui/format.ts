@@ -14,6 +14,18 @@ export function stripEmoji(text: string): string {
     .replace(/^[ \t]+|[ \t]+$/g, '')
 }
 
+const DAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
+
+/** 工作日列表 → 简短文案；用于头部展示 */
+export function formatWorkDays(days: number[]): string {
+  const sorted = [...new Set(days)].filter((d) => d >= 0 && d <= 6).sort((a, b) => a - b)
+  if (sorted.length === 7) return '每天'
+  if (sorted.length === 5 && sorted.every((d) => d >= 1 && d <= 5)) return '周一–周五'
+  if (sorted.length === 2 && sorted[0] === 0 && sorted[1] === 6) return '周末'
+  if (sorted.length === 0) return '无'
+  return sorted.map((d) => DAY_NAMES[d]!).join('/')
+}
+
 /** 0~100 → width 格进度条；越界钳制 */
 export function progressBar(percent: number, width = 10): string {
   const p = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0))
