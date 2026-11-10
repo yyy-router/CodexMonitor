@@ -254,6 +254,41 @@ describe('App', () => {
     unmount()
   })
 
+  it('宽屏查看静默列表时，分隔线高度跟随当前列表', async () => {
+    const { store, controls } = setup()
+    for (let i = 0; i < 6; i++) {
+      store.dispatch({
+        type: 'event',
+        event: {
+          type: 'suppressed',
+          entry: {
+            ts: 1000 + i,
+            severity: 'alert',
+            source: 'probeDown',
+            text: `静默${i}`,
+            reason: 'workHours',
+          },
+        },
+        now: 1000 + i,
+      })
+    }
+
+    const { stdin, lastFrame, unmount } = render(
+      <App store={store} controls={controls} onReload={async () => 'ok'} columns={100} rows={24} />,
+    )
+    stdin.write('n')
+    await delay(20)
+
+    const frame = lastFrame() ?? ''
+    // 左右边框各一条 │，分隔线所在行会多出一条
+    const dividerRows = frame
+      .split('\n')
+      .filter((line) => (line.match(/│/g) ?? []).length >= 3).length
+    expect(frame).toContain('静默通知（6）')
+    expect(dividerRows).toBe(7)
+    unmount()
+  })
+
   it('按 t 触发测试通知', async () => {
     const { store, controls, calls } = setup()
     const { stdin, unmount } = render(

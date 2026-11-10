@@ -62,12 +62,13 @@ export function App({
   const maxNotificationRows = showNotifications
     ? Math.max(0, Math.min(MAX_NOTIFICATION_ROWS, listSpace - 1))
     : 0
-  const visibleNotes = Math.min(maxNotificationRows, state.log.length)
+  const activeLog = state.showSuppressed ? state.suppressedLog : state.log
+  const visibleNotes = Math.min(maxNotificationRows, activeLog.length)
   const listLines = !showNotifications
     ? 0
     : maxNotificationRows === 0
       ? 1
-      : 1 + (state.log.length === 0 ? 1 : visibleNotes)
+      : 1 + (activeLog.length === 0 ? 1 : visibleNotes)
   const dividerLines = Math.max(leftLines, listLines)
 
   useEffect(() => {
