@@ -1,6 +1,6 @@
 {
   "name": "codexmonitor",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "监控本地 Codex 运行状态，通过飞书 / 控制台推送通知",
   "private": true,
   "type": "module",
