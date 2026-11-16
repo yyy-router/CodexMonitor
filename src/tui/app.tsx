@@ -16,6 +16,8 @@ export type AppProps = {
   controls: Controls
   /** 重载配置；返回给用户看的提示文案 */
   onReload: () => Promise<string>
+  /** 请求打开配置文件；由 cli 在 Ink 卸载后启动编辑器 */
+  onOpenConfig: () => void
   /** 终端列数；缺省读 stdout，测试可注入 */
   columns?: number
   /** 终端行数；缺省读 stdout，测试可注入 */
@@ -28,13 +30,14 @@ const LEFT_WIDTH = 26
 
 const keyBar = (showSuppressed: boolean, suppressedCount: number): string =>
   showSuppressed
-    ? '[t] 测试  [p] 暂停  [r] 重载  [n] 返回  [q] 退出'
-    : `[t] 测试  [p] 暂停  [r] 重载  [n] 静默 ${suppressedCount}  [q] 退出`
+    ? '[t] 测试 [p] 暂停 [e] 配置 [r] 重载 [n] 返回 [q] 退出'
+    : `[t] 测试 [p] 暂停 [e] 配置 [r] 重载 [n] 静默 ${suppressedCount} [q] 退出`
 
 export function App({
   store,
   controls,
   onReload,
+  onOpenConfig,
   columns: columnsProp,
   rows: rowsProp,
 }: AppProps): React.ReactElement {
@@ -81,6 +84,11 @@ export function App({
   useInput((input) => {
     const now = Date.now()
     if (input === 'q') {
+      exit()
+      return
+    }
+    if (input === 'e') {
+      onOpenConfig()
       exit()
       return
     }
@@ -145,7 +153,7 @@ export function App({
       </Box>
 
       <Box marginTop={1}>
-        <Text>
+        <Text wrap="truncate">
           {state.toast
             ? state.toast.text
             : keyBar(state.showSuppressed, state.suppressedLog.length)}
