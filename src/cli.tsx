@@ -20,6 +20,7 @@ import {
 } from './cli/options.js'
 import { createSetupIO, runSetup } from './cli/setup.js'
 import { createSession } from './cli/session.js'
+import { openConfigInEditor } from './cli/editor.js'
 import { App } from './tui/app.js'
 import { createInitialState, createTuiStore } from './tui/store.js'
 import { showSplash } from './tui/splash.js'
@@ -42,6 +43,11 @@ const TEMPLATE = `请创建 ~/.codexmonitor/config.json，例如：
 }`
 
 const msgOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** 编辑器接管终端前后清屏，避免残留上一帧 */
+const clearScreen = (): void => {
+  if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[3J\x1b[H')
+}
 
 /** TUI 模式：装配 store / 会话，退出时优雅停止 */
 async function runTui(cfg: Config, configPath: string): Promise<number> {
@@ -115,9 +121,42 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     return 1
   }
 
+  let exitReason: 'quit' | 'editConfig' = 'quit'
+  const requestEditConfig = (): void => {
+    exitReason = 'editConfig'
+  }
+
   try {
-    const app = render(<App store={store} controls={controls} onReload={onReload} />)
-    await app.waitUntilExit()
+    for (;;) {
+      exitReason = 'quit'
+      const app = render(
+        <App
+          store={store}
+          controls={controls}
+          onReload={onReload}
+          onOpenConfig={requestEditConfig}
+        />,
+      )
+      await app.waitUntilExit()
+      if (exitReason === 'quit') break
+
+      clearScreen()
+      const opened = await openConfigInEditor(configPath)
+      if (!opened.ok) {
+        store.dispatch({
+          type: 'toast',
+          text: `无法启动编辑器：${opened.reason}`,
+          now: Date.now(),
+        })
+        clearScreen()
+        continue
+      }
+
+      const message = await onReload()
+      const fallbackNote = opened.fellBack ? `（编辑器不可用，已改用 ${opened.editor}）` : ''
+      store.dispatch({ type: 'toast', text: `${message}${fallbackNote}`, now: Date.now() })
+      clearScreen()
+    }
   } finally {
     await session.stop()
   }
