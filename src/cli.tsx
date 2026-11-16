@@ -92,6 +92,7 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
         // 重载后把看板上的探针开关与额度阈值同步为新配置；关闭时暂停标志一并清掉
         store.dispatch({
           type: 'config',
+          channel: nextCfg.notify.channel,
           probeEnabled: enabled,
           quotaWarnAt: nextCfg.notify.thresholds.quotaWarn,
           quotaCriticalAt: nextCfg.notify.thresholds.quotaCritical,

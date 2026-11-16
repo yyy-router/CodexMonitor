@@ -59,6 +59,7 @@ export type TuiAction =
   | { type: 'probePaused'; paused: boolean; now: number }
   | {
       type: 'config'
+      channel: Channel
       probeEnabled: boolean
       quotaWarnAt: number
       quotaCriticalAt: number
@@ -160,6 +161,7 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
     case 'config':
       return {
         ...state,
+        channel: action.channel,
         probeEnabled: action.probeEnabled,
         quotaWarnAt: action.quotaWarnAt,
         quotaCriticalAt: action.quotaCriticalAt,
