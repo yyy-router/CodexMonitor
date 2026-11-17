@@ -50,6 +50,15 @@ describe('resolveEditor', () => {
       args: ['--wait', '-n'],
     })
   })
+
+  it('解析参数中嵌入的引号片段', () => {
+    expect(
+      resolveEditor({ EDITOR: 'code --wait --user-data-dir="C:\\Editor Data" --opt=\'a b\'' }),
+    ).toEqual({
+      command: 'code',
+      args: ['--wait', '--user-data-dir=C:\\Editor Data', '--opt=a b'],
+    })
+  })
 })
 
 describe('openConfigInEditor', () => {

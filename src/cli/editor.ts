@@ -15,13 +15,46 @@ export type OpenResult =
 
 const FALLBACK_EDITOR = 'notepad.exe'
 
-/** 双引号 / 单引号 / 普通 token；不支持 shell 变量与转义 */
-const TOKEN = /"([^"]*)"|'([^']*)'|(\S+)/g
-
+/**
+ * 逐字符扫描：引号只用于分组，不作为参数内容；反斜杠原样保留。
+ * 支持 `--flag="C:\A B"` 这种引号位于参数中间的写法。
+ */
 export function parseEditorCommand(text: string): EditorCommand | null {
-  const parts = [...text.matchAll(TOKEN)].map((m) => m[1] ?? m[2] ?? m[3] ?? '')
-  const command = parts.shift() ?? ''
-  if (command === '') return null
+  const parts: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let inToken = false
+
+  const push = (): void => {
+    if (!inToken) return
+    parts.push(current)
+    current = ''
+    inToken = false
+  }
+
+  for (const ch of text) {
+    if (quote !== null) {
+      if (ch === quote) quote = null
+      else current += ch
+      inToken = true
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      inToken = true
+      continue
+    }
+    if (/\s/.test(ch)) {
+      push()
+      continue
+    }
+    current += ch
+    inToken = true
+  }
+  push()
+
+  const command = parts.shift()
+  if (command == null || command === '') return null
   return { command, args: parts }
 }
 
