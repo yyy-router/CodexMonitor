@@ -1,12 +1,26 @@
 import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render } from 'ink-testing-library'
-import { App } from '../../src/tui/app.js'
+import { App as TuiApp, type AppProps } from '../../src/tui/app.js'
 import { createInitialState, createTuiStore } from '../../src/tui/store.js'
 import type { Controls } from '../../src/index.js'
 import type { WorkHoursConfig } from '../../src/config.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** 测试包装：为未显式传入的回调提供默认值 */
+const App = (
+  props: Omit<AppProps, 'onReload' | 'onOpenConfig'> & {
+    onReload?: AppProps['onReload']
+    onOpenConfig?: AppProps['onOpenConfig']
+  },
+) => (
+  <TuiApp
+    onReload={props.onReload ?? (async () => 'ok')}
+    onOpenConfig={props.onOpenConfig ?? (() => {})}
+    {...props}
+  />
+)
 
 const setup = (init: { now?: number; workHours?: WorkHoursConfig } = {}) => {
   const store = createTuiStore(
@@ -39,8 +53,30 @@ describe('App', () => {
     const frame = lastFrame() ?? ''
     expect(frame).toContain('CodexMonitor')
     expect(frame).toContain('通道 console')
+    expect(frame).toContain('[e] 配置')
     expect(frame).toContain('[q] 退出')
     unmount()
+  })
+
+  it('按 e 请求打开配置文件并退出', async () => {
+    const { store, controls } = setup()
+    let opened = 0
+    const app = render(
+      <App
+        store={store}
+        controls={controls}
+        onReload={async () => 'ok'}
+        onOpenConfig={() => {
+          opened += 1
+        }}
+      />,
+    )
+
+    app.stdin.write('e')
+    await delay(20)
+
+    expect(opened).toBe(1)
+    app.unmount()
   })
 
   it('显示工作时间段与当前推送状态', () => {

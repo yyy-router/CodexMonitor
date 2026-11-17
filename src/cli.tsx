@@ -20,6 +20,7 @@ import {
 } from './cli/options.js'
 import { createSetupIO, runSetup } from './cli/setup.js'
 import { createSession } from './cli/session.js'
+import { openConfigInEditor } from './cli/editor.js'
 import { App } from './tui/app.js'
 import { createInitialState, createTuiStore } from './tui/store.js'
 import { showSplash } from './tui/splash.js'
@@ -42,6 +43,11 @@ const TEMPLATE = `请创建 ~/.codexmonitor/config.json，例如：
 }`
 
 const msgOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** 编辑器接管终端前后清屏，避免残留上一帧 */
+const clearScreen = (): void => {
+  if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[3J\x1b[H')
+}
 
 /** TUI 模式：装配 store / 会话，退出时优雅停止 */
 async function runTui(cfg: Config, configPath: string): Promise<number> {
@@ -83,8 +89,8 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     stop: () => session.stop(),
   }
 
-  const onReload = async (): Promise<string> => {
-    const message = await session.reload()
+  const applyReload = async (fresh: boolean): Promise<string> => {
+    const message = fresh ? await session.reloadFresh() : await session.reload()
     if (message === '配置已重载') {
       const nextCfg = session.currentConfig()
       if (nextCfg) {
@@ -92,6 +98,7 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
         // 重载后把看板上的探针开关与额度阈值同步为新配置；关闭时暂停标志一并清掉
         store.dispatch({
           type: 'config',
+          channel: nextCfg.notify.channel,
           probeEnabled: enabled,
           quotaWarnAt: nextCfg.notify.thresholds.quotaWarn,
           quotaCriticalAt: nextCfg.notify.thresholds.quotaCritical,
@@ -105,6 +112,9 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     return message
   }
 
+  // r 键沿用去重；编辑器返回后必须重新读盘，不能被旧任务顶替
+  const onReload = (): Promise<string> => applyReload(false)
+
   const initial = session.current()
   if (initial == null) return 1
   try {
@@ -114,9 +124,42 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     return 1
   }
 
+  let exitReason: 'quit' | 'editConfig' = 'quit'
+  const requestEditConfig = (): void => {
+    exitReason = 'editConfig'
+  }
+
   try {
-    const app = render(<App store={store} controls={controls} onReload={onReload} />)
-    await app.waitUntilExit()
+    for (;;) {
+      exitReason = 'quit'
+      const app = render(
+        <App
+          store={store}
+          controls={controls}
+          onReload={onReload}
+          onOpenConfig={requestEditConfig}
+        />,
+      )
+      await app.waitUntilExit()
+      if (exitReason === 'quit') break
+
+      clearScreen()
+      const opened = await openConfigInEditor(configPath)
+      if (!opened.ok) {
+        store.dispatch({
+          type: 'toast',
+          text: `无法启动编辑器：${opened.reason}`,
+          now: Date.now(),
+        })
+        clearScreen()
+        continue
+      }
+
+      const message = await applyReload(true)
+      const fallbackNote = opened.fellBack ? `（编辑器不可用，已改用 ${opened.editor}）` : ''
+      store.dispatch({ type: 'toast', text: `${message}${fallbackNote}`, now: Date.now() })
+      clearScreen()
+    }
   } finally {
     await session.stop()
   }

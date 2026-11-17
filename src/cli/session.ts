@@ -16,6 +16,8 @@ export type Session = {
   currentConfig(): Config | undefined
   /** 串行化：并发调用复用同一个任务；返回给用户看的提示文案 */
   reload(): Promise<string>
+  /** 等当前重载结束后，再按最新文件重载一次；编辑配置后使用 */
+  reloadFresh(): Promise<string>
   /** 等待在途重载、停止当前核心；幂等 */
   stop(): Promise<void>
 }
@@ -85,6 +87,20 @@ export function createSession(initialCfg: Config, initial: Monitor, deps: Sessio
     return task
   }
 
+  const reloadFresh = async (): Promise<string> => {
+    // 先等旧任务彻底结束：它读取的是编辑前的配置，不能把结果当作最新状态
+    while (reloadTask) {
+      const pending = reloadTask
+      try {
+        await pending
+      } catch {
+        // reload 内部已收敛错误，这里只等待结束
+      }
+      if (reloadTask === pending) reloadTask = null
+    }
+    return reload()
+  }
+
   const stop = async (): Promise<void> => {
     closing = true
     if (reloadTask) {
@@ -103,6 +119,7 @@ export function createSession(initialCfg: Config, initial: Monitor, deps: Sessio
     current: () => monitor,
     currentConfig: () => cfg,
     reload,
+    reloadFresh,
     stop,
   }
 }

@@ -31,6 +31,7 @@ const cfg = (dir: string): Config => ({
 
 const cfgA = cfg('A')
 const cfgB = cfg('B')
+const cfgC = cfg('C')
 
 describe('createSession', () => {
   it('并发 reload 只重建一次，且返回同一个 promise', async () => {
@@ -54,6 +55,41 @@ describe('createSession', () => {
     expect(created).toBe(1)
     expect(session.current()).toBe(replacement)
     expect(session.currentConfig()).toBe(cfgB)
+  })
+
+  it('reloadFresh 等旧重载结束后重新读取配置', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const events: string[] = []
+    const old = makeMonitor(events, 'old')
+    const firstNext = makeMonitor(events, 'first', { gate })
+    const secondNext = makeMonitor(events, 'second')
+    const loads: Config[] = []
+    const queued = [cfgB, cfgC]
+    const session = createSession(cfgA, old, {
+      loadConfig: () => {
+        const next = queued.shift()!
+        loads.push(next)
+        return next
+      },
+      create: (c) => (c === cfgB ? firstNext : secondNext),
+    })
+
+    const first = session.reload()
+    await delay(0)
+    const fresh = session.reloadFresh()
+    expect(fresh).not.toBe(first)
+
+    await delay(0)
+    expect(loads).toEqual([cfgB])
+
+    release()
+    await expect(first).resolves.toBe('配置已重载')
+    await expect(fresh).resolves.toBe('配置已重载')
+    expect(loads).toEqual([cfgB, cfgC])
+    expect(session.currentConfig()).toBe(cfgC)
   })
 
   it('重载进行中 stop：等重载结束并停掉新核心', async () => {

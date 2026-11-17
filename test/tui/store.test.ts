@@ -216,6 +216,7 @@ describe('reduce: toast / tick / 暂停', () => {
     const paused = reduce(initial(), { type: 'probePaused', paused: true, now: 2_000 })
     const off = reduce(paused, {
       type: 'config',
+      channel: 'console',
       probeEnabled: false,
       quotaWarnAt: 70,
       quotaCriticalAt: 90,
@@ -230,6 +231,7 @@ describe('reduce: toast / tick / 暂停', () => {
     })
     expect(off.probeEnabled).toBe(false)
     expect(off.probePaused).toBe(false)
+    expect(off.channel).toBe('console')
     expect(off.quotaWarnAt).toBe(70)
     expect(off.quotaCriticalAt).toBe(90)
     expect(off.workHours.start).toBe('08:00')
@@ -237,6 +239,7 @@ describe('reduce: toast / tick / 暂停', () => {
 
     const on = reduce(off, {
       type: 'config',
+      channel: 'feishu',
       probeEnabled: true,
       quotaWarnAt: 80,
       quotaCriticalAt: 95,
@@ -251,6 +254,7 @@ describe('reduce: toast / tick / 暂停', () => {
     })
     expect(on.probeEnabled).toBe(true)
     expect(on.probePaused).toBe(false)
+    expect(on.channel).toBe('feishu')
     expect(on.quotaCriticalAt).toBe(95)
     expect(on.workHours.enabled).toBe(false)
   })
