@@ -89,8 +89,8 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     stop: () => session.stop(),
   }
 
-  const onReload = async (): Promise<string> => {
-    const message = await session.reload()
+  const applyReload = async (fresh: boolean): Promise<string> => {
+    const message = fresh ? await session.reloadFresh() : await session.reload()
     if (message === '配置已重载') {
       const nextCfg = session.currentConfig()
       if (nextCfg) {
@@ -111,6 +111,9 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
     }
     return message
   }
+
+  // r 键沿用去重；编辑器返回后必须重新读盘，不能被旧任务顶替
+  const onReload = (): Promise<string> => applyReload(false)
 
   const initial = session.current()
   if (initial == null) return 1
@@ -152,7 +155,7 @@ async function runTui(cfg: Config, configPath: string): Promise<number> {
         continue
       }
 
-      const message = await onReload()
+      const message = await applyReload(true)
       const fallbackNote = opened.fellBack ? `（编辑器不可用，已改用 ${opened.editor}）` : ''
       store.dispatch({ type: 'toast', text: `${message}${fallbackNote}`, now: Date.now() })
       clearScreen()
