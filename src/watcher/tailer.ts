@@ -25,8 +25,13 @@ export type TailerOptions = {
   now?: () => number
   /** 递归扫描会话文件（测试替身；默认 listSessionFiles） */
   listFiles?: (sessionsDir: string) => SessionFile[]
-  /** 从字节偏移 start 读到文件尾（utf8）；null 表示文件不存在（测试替身；默认 readRangeSync） */
-  readRange?: (path: string, start: number) => string | null
+  /**
+   * 从字节偏移 start 读到 end（缺省为文件尾），utf8；null 表示文件不存在。
+   * 发现文件时只读首尾窗口，避免把超大文件整体转成字符串。
+   */
+  readRange?: (path: string, start: number, end?: number) => string | null
+  /** 文件字节数；null 表示文件不存在（测试替身；默认 statSync） */
+  statSize?: (path: string) => number | null
 }
 
 export type Tailer = {
@@ -63,16 +68,31 @@ export function listSessionFiles(sessionsDir: string): SessionFile[] {
   return out
 }
 
-/** 从字节偏移 start 读文件尾；start ≥ size 时返回 ''（无新增）；文件不存在返回 null */
-function defaultReadRange(p: string, start: number): string | null {
+/** 发现文件时只读首尾各 64 KB：首部取 session_meta，尾部定位最后一个完整行 */
+const HEAD_BYTES = 64 * 1024
+const TAIL_BYTES = 64 * 1024
+
+function defaultStatSize(p: string): number | null {
+  try {
+    return statSync(p).size
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw e
+  }
+}
+
+/** 从字节偏移 start 读到 end（缺省文件尾）；start ≥ size 时返回 ''；文件不存在返回 null */
+function defaultReadRange(p: string, start: number, end?: number): string | null {
   let fd: number | undefined
   try {
     const size = statSync(p).size
     if (start >= size) return ''
+    const stop = end == null ? size : Math.min(end, size)
+    if (stop <= start) return ''
     fd = openSync(p, 'r')
-    const buf = Buffer.alloc(size - start)
-    readSync(fd, buf, 0, buf.length, start)
-    return buf.toString('utf8')
+    const buf = Buffer.alloc(stop - start)
+    const read = readSync(fd, buf, 0, buf.length, start)
+    return buf.subarray(0, read).toString('utf8')
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw e
@@ -84,29 +104,39 @@ function defaultReadRange(p: string, start: number): string | null {
 /** 跟踪中的文件：ctx 缓存会话上下文；consumedBytes 为已消费字节偏移（落在行边界） */
 type Tracked = { ctx: SessionContext; consumedBytes: number }
 
-/** 计算跟踪基线（字节偏移）：落到最后一个完整行边界，保留尾部半行，避免发现时写了一半的事件被丢 */
-function baselineBytes(content: string): number {
-  if (content.endsWith('\n')) return Buffer.byteLength(content)
-  const idx = content.lastIndexOf('\n')
-  return idx === -1 ? 0 : Buffer.byteLength(content.slice(0, idx + 1))
-}
-
 export function createTailer(opts: TailerOptions): Tailer {
   const listFiles = opts.listFiles ?? listSessionFiles
   const readRange = opts.readRange ?? defaultReadRange
+  const statSize = opts.statSize ?? defaultStatSize
   const files = new Map<string, Tracked>()
 
   /**
-   * 纳入一个文件：读首行 session_meta 提取上下文并缓存，只跟踪根会话。
-   * 读取基线设在最后一个完整行边界——只消费跟踪之后新增的字节（tail -f 语义），
-   * 若发现时最后一行写到一半，保留该半行等补全；历史回放与重启回溯（EOF-64KB）留到 main()。
+   * 纳入一个文件：只读首部窗口取 session_meta，只读尾部窗口定位最后一个完整行。
+   * 不把整个文件转成字符串：会话日志可能远超 V8 单字符串上限（约 512 MB）。
+   * 基线设在最后一个完整行边界——只消费跟踪之后新增的字节（tail -f 语义），
+   * 若发现时最后一行写到一半，保留该半行等补全。
    */
   function track(p: string): void {
-    const content = readRange(p, 0)
-    if (content == null) return
-    const ctx = opts.parseSessionMeta(content.split('\n', 1)[0] ?? '')
+    const size = statSize(p)
+    if (size == null) return
+
+    const head = readRange(p, 0, Math.min(size, HEAD_BYTES))
+    if (head == null) return
+    const ctx = opts.parseSessionMeta(head.split('\n', 1)[0] ?? '')
     if (!ctx || !ctx.isRoot) return
-    files.set(p, { ctx, consumedBytes: baselineBytes(content) })
+
+    const tailStart = Math.max(0, size - TAIL_BYTES)
+    const tail = readRange(p, tailStart)
+    if (tail == null) return
+
+    let consumedBytes = size
+    if (!tail.endsWith('\n')) {
+      const idx = tail.lastIndexOf('\n')
+      if (idx >= 0) consumedBytes = tailStart + Buffer.byteLength(tail.slice(0, idx + 1))
+      else if (tailStart === 0) consumedBytes = 0
+      // 尾部窗口内没有换行且不是文件开头：无法定位行边界，直接从 EOF 开始，避免重读超长行
+    }
+    files.set(p, { ctx, consumedBytes })
   }
 
   return {
