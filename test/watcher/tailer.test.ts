@@ -18,13 +18,13 @@ const ev = (ts: string): string =>
     payload: { type: 'task_started', turn_id: 'turn-1' },
   })
 
-/** 内存文件系统替身：readRange 按字节偏移切片，append 模拟文件增长 */
+/** 内存文件系统替身：readRange 按 UTF-8 字节偏移切片，append 模拟文件增长 */
 function fakeFs(initial: Record<string, string>) {
   const store = new Map(Object.entries(initial))
   return {
-    readRange: (p: string, start: number, end?: number): string | null => {
+    readRange: (p: string, start: number, end?: number): Buffer | null => {
       const full = store.get(p)
-      return full == null ? null : full.slice(start, end)
+      return full == null ? null : Buffer.from(full, 'utf8').subarray(start, end)
     },
     sizeOf: (p: string): number | null => {
       const full = store.get(p)
@@ -34,7 +34,7 @@ function fakeFs(initial: Record<string, string>) {
   }
 }
 
-type ReadRange = (path: string, start: number, end?: number) => string | null
+type ReadRange = (path: string, start: number, end?: number) => Buffer | null
 
 const opts = (
   listFiles: (dir: string) => SessionFile[],
@@ -126,8 +126,8 @@ describe('createTailer', () => {
 
   it('文件消失（readRange 返回 null）后不再跟踪', async () => {
     let fileContent: string | null = meta('sess-1', 'sess-1') + '\n'
-    const readRange = (p: string, start: number) =>
-      fileContent == null ? null : fileContent.slice(start)
+    const readRange = (p: string, start: number, end?: number) =>
+      fileContent == null ? null : Buffer.from(fileContent, 'utf8').subarray(start, end)
     const listFiles = (): SessionFile[] => [{ path: 'a.jsonl', mtimeMs: 1, size: 0 }]
     const readSize = (): number | null =>
       fileContent == null ? null : Buffer.byteLength(fileContent)
@@ -208,17 +208,21 @@ describe('createTailer', () => {
 
   it('发现超大文件时只读首尾窗口，不把整文件转成字符串', async () => {
     const BIG = 600 * 1024 * 1024
-    const head = meta('sess-big', 'sess-big') + '\n'
-    const tail = ev('2026-10-14T06:17:25.508Z') + '\n'
+    const head = Buffer.from(meta('sess-big', 'sess-big') + '\n')
+    const tail = Buffer.from(ev('2026-10-14T06:17:25.508Z') + '\n')
     const calls: Array<{ start: number; end?: number }> = []
-    const readRange = (p: string, start: number, end?: number): string | null => {
+    const readRange = (p: string, start: number, end?: number): Buffer | null => {
       calls.push({ start, end })
       const stop = end ?? BIG
       if (stop - start > 1024 * 1024) {
         throw new Error('Cannot create a string longer than 0x1fffffe8 characters')
       }
-      if (start === 0) return head.slice(0, stop)
-      return tail.slice(0, stop - start)
+      if (start === 0) return head.subarray(0, stop)
+      // 模拟窗口：尾部内容贴在窗口末端，前面用 0 填充，避免把换行挪到窗口开头
+      const len = Math.max(0, stop - start)
+      const window = Buffer.alloc(len)
+      tail.copy(window, Math.max(0, len - tail.length))
+      return window
     }
     const listFiles = (): SessionFile[] => [{ path: 'big.jsonl', mtimeMs: 1, size: BIG }]
     const tailer = createTailer(opts(listFiles, readRange, () => BIG))
@@ -226,6 +230,89 @@ describe('createTailer', () => {
     await expect(tailer.tick()).resolves.toEqual([])
     expect(calls.some((c) => c.start === 0 && c.end != null)).toBe(true)
     expect(calls.every((c) => c.end != null || c.start > 0)).toBe(true)
+  })
+
+  it('首行超过 64 KB 时仍能完整解析 session_meta', async () => {
+    const bigMeta = JSON.stringify({
+      type: 'session_meta',
+      payload: {
+        id: 'sess-big-meta',
+        session_id: 'sess-big-meta',
+        cwd: '/proj',
+        blob: 'x'.repeat(100 * 1024),
+      },
+    })
+    const f = fakeFs({ 'a.jsonl': bigMeta + '\n' })
+    const listFiles = (): SessionFile[] => [{ path: 'a.jsonl', mtimeMs: 1, size: 0 }]
+    const tailer = createTailer(opts(listFiles, f.readRange, f.sizeOf))
+
+    await tailer.tick()
+    f.append('a.jsonl', ev('2026-10-14T06:17:25.508Z') + '\n')
+
+    const events = await tailer.tick()
+    expect(events).toHaveLength(1)
+    expect(events[0]!.sessionId).toBe('sess-big-meta')
+  })
+
+  it('stat 之后写入方补全半行：事件不丢失', async () => {
+    const metaLine = meta('sess-race', 'sess-race') + '\n'
+    const eventLine = ev('2026-10-14T06:17:25.508Z')
+    const cutoff = Buffer.byteLength(metaLine + eventLine)
+    const f = fakeFs({ 'a.jsonl': metaLine + eventLine + '\n' })
+    const listFiles = (): SessionFile[] => [{ path: 'a.jsonl', mtimeMs: 1, size: cutoff }]
+    const tailer = createTailer(opts(listFiles, f.readRange, () => cutoff))
+
+    const events = await tailer.tick()
+    expect(events).toHaveLength(1)
+    expect(events[0]!.sessionId).toBe('sess-race')
+  })
+
+  it('未完成行超过尾部窗口：补全后事件不丢失', async () => {
+    const bigEvent = JSON.stringify({
+      timestamp: '2026-10-14T06:17:25.508Z',
+      type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'turn-1', blob: 'x'.repeat(100 * 1024) },
+    })
+    const f = fakeFs({ 'a.jsonl': meta('sess-long', 'sess-long') + '\n' + bigEvent })
+    const listFiles = (): SessionFile[] => [{ path: 'a.jsonl', mtimeMs: 1, size: 0 }]
+    const tailer = createTailer(opts(listFiles, f.readRange, f.sizeOf))
+
+    await tailer.tick()
+    f.append('a.jsonl', '\n')
+
+    const events = await tailer.tick()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ kind: 'turnStarted', sessionId: 'sess-long' })
+  })
+
+  it('尾部窗口切在多字节字符中间时基线仍正确', async () => {
+    const metaLine = meta('sess-utf8', 'sess-utf8') + '\n'
+    const filler = 'é'.repeat(40_000) + '\n'
+    const event = ev('2026-10-14T06:17:25.508Z')
+    const prefixBytes = Buffer.byteLength(metaLine)
+    const fillerBytes = Buffer.byteLength(filler)
+
+    let pad = 0
+    while ((prefixBytes + fillerBytes + Buffer.byteLength(event) + pad - 65536) % 2 !== 1) {
+      pad += 1
+    }
+    const content = metaLine + filler + event + ' '.repeat(pad)
+    const size = Buffer.byteLength(content)
+    const tailStart = size - 65536
+    expect(tailStart).toBeGreaterThan(prefixBytes)
+    expect(tailStart).toBeLessThan(prefixBytes + fillerBytes)
+    expect((tailStart - prefixBytes) % 2).toBe(1)
+
+    const f = fakeFs({ 'a.jsonl': content })
+    const listFiles = (): SessionFile[] => [{ path: 'a.jsonl', mtimeMs: 1, size }]
+    const tailer = createTailer(opts(listFiles, f.readRange, f.sizeOf))
+
+    await tailer.tick()
+    f.append('a.jsonl', '\n')
+
+    const events = await tailer.tick()
+    expect(events).toHaveLength(1)
+    expect(events[0]!.sessionId).toBe('sess-utf8')
   })
 })
 
