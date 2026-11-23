@@ -35,6 +35,7 @@
 - ✅ **推送通道**：飞书企业自建应用、控制台；**iLink 暂不实现**（`channel: "ilink"` 会明确报错）
 - ✅ **单文件打包**：`npm run build:exe` 产出 `dist-exe/CodexMonitor.exe`（Node SEA，约 105 MB）
 - ✅ **工作时间段**：默认工作日 09:00–19:00，范围外全部静默并记录，TUI 按 `n` 查看
+- ✅ **主界面配置**：TUI 按 `e` 用外部编辑器修改当前配置，保存退出后自动重载
 - ⚠️ **运行时依赖**：Ink / React / ascii.rest（TUI 与启动动画）；分发以单文件 exe 为准
 - ✅ **投递可靠**：失败自动进入发件箱，指数退避重试并跨重启恢复
 - ⚠️ **不回放历史**：从进程启动时刻开始 tail 会话日志，启动前的旧事件不会补推
@@ -46,9 +47,12 @@
 ```bash
 npm install
 cp codexmonitor.config.example.json codexmonitor.config.json
+# PowerShell 用：Copy-Item codexmonitor.config.example.json codexmonitor.config.json
 # 编辑 codexmonitor.config.json：先设 "channel": "console" 本地验证
 npm start
 ```
+
+> 配置查找顺序：`--config` > `~/.codexmonitor/config.json` > `./codexmonitor.config.json`。已存在用户目录配置时，当前目录的配置文件不会生效；想使用仓库内配置，请显式传 `--config`。
 
 启动后会看到：
 
@@ -146,8 +150,8 @@ NetProbe（独立定时）   ─┘                              │
 |---|---|
 | `t` | 发送测试通知 |
 | `p` | 暂停 / 恢复网络探针 |
-| `r` | 重载配置 |
 | `e` | 打开当前生效的配置文件，保存后自动重载 |
+| `r` | 重载配置 |
 | `n` | 切换最近通知 / 静默通知 |
 | `q` | 退出 |
 
@@ -169,6 +173,11 @@ $env:EDITOR = '"D:\app\vscode\Microsoft VS Code\Code.exe" --wait'
 
 编辑器退出后自动重载。配置无效或凭证错误时，旧配置继续运行并提示失败原因；编辑器无法启动时回退记事本。编辑期间监控与网络探针不会停止。
 
+两点注意：
+
+- 编辑器命令**不经过 shell**，`.cmd` / `.bat` 包装脚本不能直接执行，请填真实 exe 路径
+- GUI 编辑器需要阻塞到窗口关闭（例如 VS Code 的 `--wait`），否则 TUI 会在尚未保存时立即重载
+
 ## 运行时产物
 
 | 路径 | 内容 |
@@ -188,7 +197,7 @@ npm start           # prestart 自动 build，然后常驻运行
 npm run build:exe   # Node 26 SEA：dist-exe/CodexMonitor.exe
 ```
 
-测试覆盖：JSONL 解析、尾部读取、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路、运行时事件与监控核心、TUI 格式化 / store / 组件、工作时间判断与静默记录。
+测试覆盖：JSONL 解析、尾部读取（含超大文件与多字节边界）、分级、聚合、额度状态机、配额守卫、代理推导（含 SOCKS5 / 认证 / HTTPS）、三层探测、投递分片、投递日志、状态持久化、编排层、端到端文件链路、运行时事件与监控核心、TUI 格式化 / store / 组件、工作时间判断与静默记录、外部编辑器解析与启动。
 
 ## 自动化
 
@@ -208,6 +217,8 @@ npm run build:exe   # Node 26 SEA：dist-exe/CodexMonitor.exe
 - **`quotaWarn` 尚无冷却**：`quotaWarnCooldownMs` 已声明但未生效，开启 80% 预警后可能偏频繁
 - **工作时间外完全静默**：包括告警；只能通过 TUI `n` 或 `suppressed.jsonl` 查看。如果需要告警豁免，应另行配置或修改代码
 - **工作时间不支持跨午夜**：`start >= end` 会报配置错误
+- **配置编辑器需等待退出**：GUI 编辑器未提供等待参数（如 `--wait`）时，TUI 无法判断实际保存时机
+- **单行超过 4 MB 的极端会话日志**：`session_meta` 超过 4 MB 的会话不会被跟踪；发现时未完成且单行超过 4 MB 的事件可能丢失起点
 
 ## 许可
 
